@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -69,7 +70,7 @@ func run(log *slog.Logger) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("server siap", "addr", cfg.HTTPAddr, "origin", cfg.AllowedOrigin)
+		log.Info("server siap", "addr", cfg.HTTPAddr, "origins", strings.Join(cfg.AllowedOrigins, ", "))
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}

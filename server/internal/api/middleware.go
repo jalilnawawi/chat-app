@@ -79,11 +79,12 @@ func (s *Server) clearSessionCookie(w http.ResponseWriter) {
 	})
 }
 
-// cors mengizinkan tepat satu origin. Kredensial cookie hanya boleh dikirim ke
-// origin yang disebut eksplisit — wildcard "*" tidak sah bersama credentials.
+// cors memantulkan kembali origin yang cocok dengan daftar izin. Kredensial
+// cookie hanya boleh dikirim ke origin yang disebut eksplisit — wildcard "*"
+// tidak sah bersama credentials.
 func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if origin := r.Header.Get("Origin"); origin == s.cfg.AllowedOrigin {
+		if origin := r.Header.Get("Origin"); s.cfg.AllowsOrigin(origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")

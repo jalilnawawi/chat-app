@@ -31,7 +31,7 @@ func NewServer(cfg config.Config, st *store.Store, h *hub.Hub, log *slog.Logger)
 		cfg:   cfg,
 		store: st,
 		hub:   h,
-		ws:    ws.NewHandler(st, h, log, cfg.AllowedOrigin),
+		ws:    ws.NewHandler(st, h, log, cfg.AllowedOrigins),
 		log:   log,
 	}
 }

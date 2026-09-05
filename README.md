@@ -24,6 +24,10 @@ cd web && bun install && bun run dev    # http://localhost:5174
 Buka dua jendela browser berbeda (satu normal, satu incognito), daftar dua akun,
 lalu mulai percakapan.
 
+Frontend bisa dibuka lewat `localhost:5174`, `127.0.0.1:5174`, maupun `[::1]:5174`
+— ketiganya sudah diuji. Backend tidak perlu dibuka langsung: dev server Vite
+meneruskan `/api` dan `/ws` ke sana.
+
 Port default 8090 dan 5174 — bukan 8080/5173 — supaya tidak bentrok dengan
 project lain yang biasanya sudah memakai port itu. Ubah lewat `.env`
 (lihat `.env.example` di root dan di `web/`).
@@ -90,6 +94,15 @@ Selain itu:
   yang jadi kekuatannya — menyebarkan hasilnya.
 - **Hapus pesan bersifat soft delete.** Baris tetap ada supaya `seq` tidak bolong
   dan client yang sedang offline tetap bisa menyinkronkan status "dihapus".
+- **Frontend dan API dilayani lewat satu origin.** Dev server Vite mem-proxy
+  `/api` dan `/ws` ke backend. Alasannya bukan kenyamanan: kalau halaman dibuka
+  di `127.0.0.1:5174` sementara API dipanggil di `localhost:8090`, browser
+  menganggapnya lintas *site* — `localhost` dan `127.0.0.1` adalah site berbeda
+  walau menunjuk mesin yang sama — sehingga cookie sesi `SameSite=Lax` tidak
+  ikut terkirim dan semua permintaan setelah login menjadi 401. Dengan satu
+  origin, alamat apa pun yang diketik di address bar tetap jalan.
+- **Vite mengikat `::` (dual-stack).** Default-nya hanya IPv6 loopback, dan
+  browser yang memilih IPv4 lebih dulu gagal tersambung ke `127.0.0.1:5174`.
 - **Semua siaran lewat satu interface `hub.Broadcaster`.** Saat butuh lebih dari
   satu instance, yang ditulis hanya implementasi kedua berbasis Redis pub/sub —
   handler tidak berubah.

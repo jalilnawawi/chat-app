@@ -1,8 +1,15 @@
 import type { Conversation, Member, Message, User } from './types';
 
-const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8090';
+// Kosong = satu origin dengan halaman (dev memakai proxy Vite, produksi
+// memakai reverse proxy). Isi VITE_API_URL hanya kalau backend memang berada di
+// origin lain — dan ingat konsekuensinya: cookie sesi jadi lintas site.
+const BASE = import.meta.env.VITE_API_URL ?? '';
 
-export const wsURL = () => BASE.replace(/^http/, 'ws') + '/ws';
+export const wsURL = () => {
+  if (BASE) return BASE.replace(/^http/, 'ws') + '/ws';
+  const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${scheme}//${location.host}/ws`;
+};
 
 export class ApiError extends Error {
   constructor(

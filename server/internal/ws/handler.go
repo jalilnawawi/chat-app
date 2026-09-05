@@ -27,10 +27,14 @@ type Handler struct {
 	originHosts []string
 }
 
-func NewHandler(st *store.Store, h *hub.Hub, log *slog.Logger, allowedOrigin string) *Handler {
+func NewHandler(st *store.Store, h *hub.Hub, log *slog.Logger, allowedOrigins []string) *Handler {
+	// websocket.Accept membandingkan HOST, bukan origin lengkap, jadi skema
+	// dibuang di sini.
 	hosts := []string{}
-	if u, err := url.Parse(allowedOrigin); err == nil && u.Host != "" {
-		hosts = append(hosts, u.Host)
+	for _, origin := range allowedOrigins {
+		if u, err := url.Parse(origin); err == nil && u.Host != "" {
+			hosts = append(hosts, u.Host)
+		}
 	}
 	return &Handler{store: st, hub: h, log: log, originHosts: hosts}
 }
