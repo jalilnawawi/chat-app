@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: chatapp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: chat
+      POSTGRES_PASSWORD: chat
+      POSTGRES_DB: chatapp
+    ports:
+      # 5433 di host biar nggak bentrok sama Postgres lokal di 5432
+      - "5433:5432"
+    volumes:
+      # Postgres 18 menaruh data di subdirektori versi. Mount di
+      # /var/lib/postgresql (bukan .../data) sesuai konvensi baru image-nya.
+      - chatapp-pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chat -d chatapp"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  chatapp-pgdata:

@@ -1,0 +1,17 @@
+# Go
+/server/bin/
+*.test
+
+# Node / Bun
+node_modules/
+/web/dist/
+.vite/
+
+# Env
+.env
+.env.local
+
+# Editor / OS
+.DS_Store
+.idea/
+*.swp
