@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../api';
+import { unsubscribeThisDevice, usePush } from '../push';
 import { useStore } from '../store';
 import type { Conversation } from '../types';
 import NewChatDialog from './NewChatDialog';
@@ -7,6 +8,25 @@ import NewChatDialog from './NewChatDialog';
 /** Judul percakapan: grup pakai nama grup, DM pakai nama lawan bicara. */
 export function conversationTitle(c: Conversation): string {
   return c.type === 'group' ? (c.title ?? 'Grup') : (c.peer?.displayName ?? 'Percakapan');
+}
+
+/**
+ * Baris pratinjau di bawah judul percakapan.
+ *
+ * Pesan yang isinya hanya lampiran akan menghasilkan baris kosong kalau
+ * body-nya dipakai begitu saja — dan baris kosong terbaca sebagai "belum ada
+ * apa-apa", padahal baru saja ada foto yang masuk.
+ */
+function preview(c: Conversation): string {
+  const last = c.lastMessage;
+  if (!last) return 'Belum ada pesan';
+  if (last.deletedAt) return 'Pesan dihapus';
+  if (last.body) return last.body;
+
+  const atts = last.attachments ?? [];
+  if (atts.length === 0) return '';
+  if (atts.length > 1) return `📎 ${atts.length} lampiran`;
+  return atts[0]!.mime.startsWith('image/') ? '📷 Gambar' : `📎 ${atts[0]!.name}`;
 }
 
 export default function Sidebar() {
@@ -19,8 +39,14 @@ export default function Sidebar() {
   const reset = useStore(s => s.reset);
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  const push = usePush();
 
   async function logout() {
+    // Langganan notifikasi dicabut SEBELUM sesinya dibuang — pencabutan itu
+    // sendiri butuh sesi yang masih berlaku. Tanpa ini, langganan orang ini
+    // tetap hidup di komputer yang dipakai bergantian, dan pratinjau pesannya
+    // terus muncul di layar kunci orang berikutnya.
+    await unsubscribeThisDevice();
     await api.logout().catch(() => {});
     reset();
   }
@@ -37,12 +63,35 @@ export default function Sidebar() {
             {connected ? 'Tersambung' : 'Menyambungkan ulang…'}
           </p>
         </div>
-        <button
-          onClick={logout}
-          className="rounded-md px-2 py-1 text-xs text-muted transition hover:bg-canvas hover:text-ink"
-        >
-          Keluar
-        </button>
+        <div className="flex shrink-0 items-center gap-0.5">
+          {/* Tombol notifikasi hanya muncul kalau memang ada yang bisa
+              dilakukan: browser mendukungnya DAN server menyalakannya. Tombol
+              yang selalu ada tapi kadang tidak berefek lebih buruk daripada
+              tombol yang tidak ada. */}
+          {push.supported && push.available && (
+            <button
+              onClick={push.toggle}
+              disabled={push.busy || push.blocked}
+              title={
+                push.blocked
+                  ? 'Izin notifikasi diblokir di pengaturan browser'
+                  : push.enabled
+                    ? 'Matikan notifikasi'
+                    : 'Nyalakan notifikasi saat aplikasi ditutup'
+              }
+              aria-label={push.enabled ? 'Matikan notifikasi' : 'Nyalakan notifikasi'}
+              className="rounded-md px-1.5 py-1 text-sm transition hover:bg-canvas disabled:opacity-40"
+            >
+              {push.enabled ? '🔔' : '🔕'}
+            </button>
+          )}
+          <button
+            onClick={logout}
+            className="rounded-md px-2 py-1 text-xs text-muted transition hover:bg-canvas hover:text-ink"
+          >
+            Keluar
+          </button>
+        </div>
       </header>
 
       <div className="px-3 py-2">
@@ -78,13 +127,7 @@ export default function Sidebar() {
 
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{conversationTitle(c)}</span>
-                <span className="block truncate text-xs text-muted">
-                  {c.lastMessage
-                    ? c.lastMessage.deletedAt
-                      ? 'Pesan dihapus'
-                      : c.lastMessage.body
-                    : 'Belum ada pesan'}
-                </span>
+                <span className="block truncate text-xs text-muted">{preview(c)}</span>
               </span>
 
               {c.unread > 0 && (

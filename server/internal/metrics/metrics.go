@@ -43,6 +43,18 @@ type Metrics struct {
 	RedisErrors          *prometheus.CounterVec
 	RedisSubscriptions   prometheus.Gauge
 
+	// ---- Lampiran ----
+	AttachmentUploads   *prometheus.CounterVec
+	AttachmentBytes     prometheus.Counter
+	AttachmentDownloads *prometheus.CounterVec
+	AttachmentSwept     prometheus.Counter
+
+	// ---- Push notification ----
+	PushSent     *prometheus.CounterVec
+	PushSkipped  *prometheus.CounterVec
+	PushDropped  prometheus.Counter
+	PushDuration prometheus.Histogram
+
 	// ---- Rate limit ----
 	RateLimited *prometheus.CounterVec
 
@@ -136,6 +148,47 @@ func New() *Metrics {
 		Help: "Channel Redis yang sedang dilanggan instance ini (satu per user online lokal).",
 	})
 
+	m.AttachmentUploads = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace, Subsystem: "attachments", Name: "uploads_total",
+		Help: "Unggahan lampiran, per hasil (ok, ditolak, gagal simpan).",
+	}, []string{"result"})
+
+	m.AttachmentBytes = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: namespace, Subsystem: "attachments", Name: "uploaded_bytes_total",
+		Help: "Total byte lampiran yang masuk ke penyimpanan.",
+	})
+
+	m.AttachmentDownloads = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace, Subsystem: "attachments", Name: "downloads_total",
+		Help: "Pengambilan lampiran, per hasil.",
+	}, []string{"result"})
+
+	m.AttachmentSwept = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: namespace, Subsystem: "attachments", Name: "swept_total",
+		Help: "Lampiran yatim yang dibuang: diunggah tapi tidak pernah jadi dikirim.",
+	})
+
+	m.PushSent = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace, Subsystem: "push", Name: "sent_total",
+		Help: "Notifikasi yang dikirim ke layanan push, per hasil.",
+	}, []string{"result"})
+
+	m.PushSkipped = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace, Subsystem: "push", Name: "skipped_total",
+		Help: "Notifikasi yang sengaja TIDAK dikirim, per alasan (online, debounce).",
+	}, []string{"reason"})
+
+	m.PushDropped = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: namespace, Subsystem: "push", Name: "dropped_total",
+		Help: "Notifikasi yang dibuang karena antrean pengirim penuh.",
+	})
+
+	m.PushDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: namespace, Subsystem: "push", Name: "send_duration_seconds",
+		Help:    "Durasi satu kiriman ke layanan push milik vendor browser.",
+		Buckets: []float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
+	})
+
 	m.RateLimited = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace, Name: "rate_limited_total",
 		Help: "Permintaan yang ditolak rate limiter, per jenis kuota.",
@@ -157,6 +210,8 @@ func New() *Metrics {
 		m.WSResumeSent, m.WSResumeFail,
 		m.EventsPublished, m.BroadcastDuration, m.BroadcastFanout,
 		m.RedisPublishDuration, m.RedisErrors, m.RedisSubscriptions,
+		m.AttachmentUploads, m.AttachmentBytes, m.AttachmentDownloads, m.AttachmentSwept,
+		m.PushSent, m.PushSkipped, m.PushDropped, m.PushDuration,
 		m.RateLimited, m.Draining, m.BuildInfo,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),

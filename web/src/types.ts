@@ -8,12 +8,32 @@ export type User = {
   createdAt: string;
 };
 
+/**
+ * Lampiran sebuah pesan.
+ *
+ * `url` selalu datang dari server dan tidak pernah dirangkai di sini: dia
+ * menunjuk ke API ini, bukan ke penyimpanan objek, karena hak baca sebuah
+ * lampiran ditentukan oleh keanggotaan percakapan — dan hanya server yang tahu
+ * soal itu. Konsekuensinya, <img src> memerlukan cookie sesi, dan itu memang
+ * terkirim otomatis untuk permintaan satu origin.
+ */
+export type Attachment = {
+  id: string;
+  url: string;
+  name: string;
+  mime: string;
+  size: number;
+  width?: number;
+  height?: number;
+};
+
 export type Message = {
   id: string;
   conversationId: string;
   seq: number;
   senderId: string;
   body: string;
+  attachments: Attachment[];
   createdAt: string;
   editedAt: string | null;
   deletedAt: string | null;
@@ -44,8 +64,40 @@ export type PendingMessage = {
   id: string;
   conversationId: string;
   body: string;
+  attachments: Attachment[];
   createdAt: string;
   status: 'sending' | 'failed';
+};
+
+/**
+ * Berkas yang sedang atau sudah diunggah, tapi pesannya belum dikirim.
+ *
+ * Unggahan dipisah dari pengiriman pesan supaya keduanya bisa gagal sendiri-
+ * sendiri: berkas sepuluh megabyte butuh waktu dan bisa putus di tengah,
+ * sedangkan mengirim pesan harus tetap satu tindakan cepat yang jawabannya
+ * pasti. Yang dikirim bersama pesan hanyalah id dari unggahan yang sudah
+ * selesai.
+ */
+export type Upload = {
+  /** Kunci lokal, bukan id lampiran — id baru ada setelah server menerima. */
+  key: string;
+  name: string;
+  size: number;
+  mime: string;
+  /** objectURL untuk pratinjau gambar; wajib dilepas saat unggahan dibuang. */
+  previewUrl: string | null;
+  /** 0..1 */
+  progress: number;
+  status: 'uploading' | 'ready' | 'failed';
+  attachment: Attachment | null;
+  error: string | null;
+  /**
+   * Apakah mencoba lagi masih ada gunanya.
+   *
+   * Unggahan yang putus di tengah jalan layak diulang; yang ditolak karena
+   * ukurannya tidak, karena ukurannya tidak akan berubah.
+   */
+  retriable: boolean;
 };
 
 /** Event yang datang dari server lewat WebSocket. */
@@ -71,3 +123,9 @@ export type ServerEvent =
    */
   | { type: 'server.shutdown'; payload: { reason: string } }
   | { type: 'error'; payload: { message: string } };
+
+/** Jawaban GET /api/push/config. */
+export type PushConfig = {
+  enabled: boolean;
+  publicKey: string;
+};

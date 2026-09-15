@@ -7,6 +7,9 @@ Target 800+ concurrent user: **SELESAI** (5 Sep 2026) — diuji 1000 koneksi,
 50 pesan/detik, 100% pesan sampai, latensi fan-out p99 10,8 ms lintas dua instance.
 Lihat [docs/scaling.md](docs/scaling.md).
 
+Lampiran & push notification: **SELESAI** (15 Sep 2026) — lihat
+[docs/lampiran-dan-push.md](docs/lampiran-dan-push.md).
+
 Legend: `[ ]` belum · `[~]` jalan · `[x]` selesai
 
 ---
@@ -86,10 +89,8 @@ langsung. Angka lengkap dan catatan operasional di [docs/scaling.md](docs/scalin
 - [x] Verifikasi browser (Brave, dua konteks terpisah): daftar, buka DM, kirim
       realtime, putus jaringan, sambung lagi, dan pesan yang terlewat menyusul
       lewat `sync.batch` — 5/5 lulus
-- [ ] Push notification untuk user offline — **ditunda, sengaja.** Ini fitur
-      produk, bukan infrastruktur: butuh keputusan Web Push (VAPID) vs FCM,
-      service worker, UI izin notifikasi, dan aturan kapan sebuah pesan pantas
-      membangunkan orang.
+- [x] Push notification untuk user offline — ditunda dari fase ini karena
+      memang fitur produk, bukan infrastruktur. **Dikerjakan di Fase 7.**
 
 ### Tiga bug yang ditemukan OLEH uji beban ini
 Ketiganya sudah diperbaiki, dan ketiganya tidak terlihat pada dua browser di meja
@@ -110,8 +111,88 @@ Ketiganya sudah diperbaiki, dan ketiganya tidak terlihat pada dua browser di mej
    bersamaan. 464 dari 1000 koneksi terjebak di lingkaran itu. Diperbaiki dengan
    `sync.batch` (50 pesan per frame) + jalur kirim yang menunggu, bukan membuang.
 
-## Fase 7 — Kandidat berikutnya
-- [ ] Push notification untuk user offline (dipindahkan dari Fase 6)
+## Fase 7 — Lampiran & push notification
+Keduanya bisa dimatikan lewat satu variabel lingkungan, dan aplikasi tetap utuh
+sebagai chat tanpa keduanya — pola yang sama dengan `REDIS_URL` di Fase 6.
+Keputusan lengkap di [docs/lampiran-dan-push.md](docs/lampiran-dan-push.md).
+
+### Lampiran
+- [x] SeaweedFS (`chrislusf/seaweedfs:4.40`) di docker-compose, diakses lewat
+      filer-nya — HTTP biasa, tanpa SDK tambahan
+- [x] `blob.Store` sebagai satu-satunya pintu ke penyimpanan, sejalan dengan
+      `hub.Broadcaster` dan `ratelimit.Limiter`
+- [x] Unggah mengalir tanpa pernah utuh di memori (`MultipartReader` +
+      `io.Pipe`), batas ukuran dipasang di body lewat `MaxBytesReader`
+- [x] Isi lampiran HANYA lewat server ini, izinnya dievaluasi di dalam query —
+      penyimpanan tidak tahu apa-apa tentang keanggotaan percakapan
+- [x] Tipe ditentukan dari isi berkas, bukan dari yang diakui client; hanya
+      empat tipe gambar disajikan inline, selebihnya dipaksa terunduh
+- [x] Tabel `attachments` sebagai otoritas, kolom jsonb Fase 1 sebagai salinan
+      baca — riwayat tetap satu query
+- [x] Penyapu lampiran yatim (diunggah tapi tidak pernah jadi dikirim), dengan
+      index parsial yang hanya memuat baris yang sedang menganggur
+- [x] UI: pilih/seret/tempel, pratinjau lokal seketika, bilah kemajuan
+      sungguhan, kirim ulang per berkas
+
+### Push notification
+- [x] Web Push (VAPID) — dipilih di atas FCM karena tidak mengikat aplikasi ke
+      satu vendor dan tidak menuntut SDK di frontend
+- [x] `go run ./cmd/vapid` membuat kunci sekali; kunci publiknya diminta client
+      ke server, tidak ditanam di bundel frontend
+- [x] Hanya membangunkan yang benar-benar offline (presence lintas instance)
+- [x] Peredam dering per percakapan memakai token bucket yang sama dengan kuota,
+      sehingga berlaku lintas instance juga
+- [x] Antrean dengan delapan pekerja yang MEMBUANG saat penuh — deringnya boleh
+      hilang, pesannya tidak
+- [x] Langganan yang dijawab 404/410 dibuang sendiri, dan dicabut saat logout
+      supaya komputer yang dipakai bergantian tidak menampilkan pratinjau pesan
+      orang sebelumnya di layar kunci
+- [x] Service worker tanpa cache sama sekali, dan klik notifikasi memakai
+      postMessage alih-alih navigasi
+
+### Verifikasi
+- [x] `go vet` + `go test -race ./...` bersih; test baru untuk blob store,
+      penyaringan penerima notifikasi, dan penyusunan kunci penyimpanan
+- [x] `tsc --noEmit` + `vite build` bersih
+- [x] Uji HTTP langsung: unggah, kirim, unduh oleh anggota (200), oleh orang
+      luar (404), tanpa login (401), pakai ulang lampiran (403), berkas 12 MB
+      (413), HTML dan SVG berisi script (keduanya jadi `attachment`)
+- [x] Verifikasi browser (Brave, dua konteks terpisah, puppeteer-core):
+      20/20 lulus — gambar sampai realtime dan benar-benar termuat, pesan tanpa
+      teks, pratinjau sidebar, batas ukuran, tombol kirim yang tidak terkunci
+      oleh unggahan gagal
+- [ ] Jabat tangan langganan push dengan layanan push vendor — **tidak bisa
+      diselesaikan di lingkungan uji ini.** Brave mematikan relai Google secara
+      bawaan dan tidak bisa dinyalakan dari baris perintah. Yang sudah terbukti:
+      service worker aktif, kunci publik sampai ke client, tombolnya muncul, dan
+      seluruh sisi server (simpan langganan, penyaringan offline, peredam
+      dering, kiriman keluar, pembuangan langganan mati) diuji lewat HTTP.
+
+### Sembilan temuan dari review, semuanya diperbaiki
+Yang paling serius: `Enqueue` bisa mengirim ke channel yang sudah ditutup dan
+memanikkan seluruh proses — `select` dengan `default` melindungi dari antrean
+penuh, bukan dari antrean tertutup, dan celahnya terbuka persis saat rolling
+deploy. Selebihnya: langganan push yang tertinggal setelah logout, lampiran yang
+tidak pernah terbuang saat pesannya dihapus, objek `File` yang menempel di memori
+setelah terkirim, URL lampiran yang melewati awalan API, satu anggaran waktu yang
+dibagi seluruh penerima satu kabar, tombol "coba lagi" untuk penolakan yang pasti
+gagal lagi, pengodean `filename*` yang belum menutup titik koma, dan ikon
+notifikasi yang dirujuk tanpa berkasnya ada.
+
+### Satu bug yang ditemukan OLEH menjalankannya di browser
+Selector zustand ditulis `s.uploads[id] ?? []`. Array kosong itu BARU pada setiap
+pembacaan, dan zustand membandingkan hasil selector dengan `Object.is` — jadi
+snapshotnya tidak pernah dianggap sama dengan sebelumnya, dan komponennya render
+ulang tanpa henti sampai React menyerah dengan "Maximum update depth exceeded".
+
+`tsc` bersih, `go test` bersih, dan tidak ada satu pun test yang bisa
+menangkapnya. Yang menangkapnya adalah membuka halamannya.
+
+---
+
+## Fase 8 — Kandidat berikutnya
 - [ ] Partisi `messages` — baru relevan di puluhan juta baris; rencana lengkap
       beserta pemicunya sudah ditulis di [docs/scaling.md](docs/scaling.md)
-- [ ] Upload lampiran (kolom `attachments` sudah disiapkan sejak Fase 1)
+- [ ] Thumbnail untuk gambar — foto 12 megapiksel dari ponsel sekarang diunduh
+      utuh untuk ditampilkan selebar 300 piksel
+- [ ] Range request untuk lampiran, supaya video panjang bisa dilompati

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '../store';
+import AttachmentList from './AttachmentList';
 import type { Message, PendingMessage } from '../types';
 
 type Props = {
@@ -32,6 +33,7 @@ export default function MessageBubble({
   const body = message?.body ?? pending?.body ?? '';
   const createdAt = message?.createdAt ?? pending?.createdAt ?? '';
   const deleted = Boolean(message?.deletedAt);
+  const attachments = (message?.attachments ?? pending?.attachments ?? []).filter(() => !deleted);
 
   async function saveEdit() {
     if (!message) return;
@@ -48,7 +50,12 @@ export default function MessageBubble({
         )}
 
         <div
-          className={`rounded-2xl px-3.5 py-2 text-sm ${
+          className={`rounded-2xl text-sm ${
+            // Gelembung yang isinya cuma gambar dibuat rapat: padding tebal di
+            // sekeliling foto membuatnya tampak seperti bingkai, bukan seperti
+            // foto yang dikirim.
+            attachments.length > 0 && body === '' && !deleted ? 'p-1.5' : 'px-3.5 py-2'
+          } ${
             deleted
               ? 'border border-dashed border-line text-muted italic'
               : mine
@@ -72,9 +79,16 @@ export default function MessageBubble({
               className="w-full resize-none bg-transparent text-inherit outline-none"
             />
           ) : (
-            <p className="break-words whitespace-pre-wrap">
-              {deleted ? 'Pesan ini dihapus' : body}
-            </p>
+            <div className="flex flex-col gap-1.5">
+              <AttachmentList attachments={attachments} mine={mine} />
+              {/* Pesan boleh hanya berisi lampiran — mengirim foto tanpa
+                  keterangan adalah hal yang paling biasa dilakukan orang. */}
+              {(body !== '' || deleted) && (
+                <p className="break-words whitespace-pre-wrap">
+                  {deleted ? 'Pesan ini dihapus' : body}
+                </p>
+              )}
+            </div>
           )}
         </div>
 
@@ -100,15 +114,19 @@ export default function MessageBubble({
 
           {mine && message && !deleted && !editing && (
             <span className="hidden gap-2 group-hover:flex">
-              <button
-                onClick={() => {
-                  setDraft(message.body);
-                  setEditing(true);
-                }}
-                className="hover:text-ink"
-              >
-                edit
-              </button>
+              {/* Pesan tanpa teks tidak punya apa pun untuk diedit; lampiran
+                  tidak bisa diganti setelah terkirim. */}
+              {message.body !== '' && (
+                <button
+                  onClick={() => {
+                    setDraft(message.body);
+                    setEditing(true);
+                  }}
+                  className="hover:text-ink"
+                >
+                  edit
+                </button>
+              )}
               <button
                 onClick={() => void deleteMessage(message.id)}
                 className="hover:text-ink"

@@ -41,5 +41,42 @@ services:
       timeout: 3s
       retries: 10
 
+  # Penyimpanan lampiran (Fase 7).
+  #
+  # Satu container menjalankan master + volume + filer sekaligus lewat
+  # `weed server`. Di produksi ketiganya dipisah; di sini tidak, karena yang
+  # ingin dibuktikan adalah jalur datanya — bukan topologi klasternya.
+  #
+  # -ip=127.0.0.1 membuat master mencatat alamat volume server sebagai
+  # localhost. Terdengar salah, tapi justru benar untuk container all-in-one:
+  # yang membaca catatan itu adalah filer di dalam container yang SAMA, jadi
+  # "localhost" memang menunjuk tujuan yang tepat — dan tidak ada
+  # ketergantungan pada DNS antar container.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.40
+    container_name: chatapp-seaweedfs
+    restart: unless-stopped
+    command: >
+      server
+      -dir=/data
+      -ip=127.0.0.1
+      -ip.bind=0.0.0.0
+      -filer
+      -master.volumeSizeLimitMB=512
+      -volume.max=16
+    ports:
+      # Hanya filer yang perlu dijangkau aplikasi. Port master (9333) dibuka
+      # untuk melihat dasbornya saat mengembangkan, bukan karena dipakai.
+      - "8890:8888"
+      - "9334:9333"
+    volumes:
+      - chatapp-seaweed:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8888/?limit=1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
 volumes:
   chatapp-pgdata:
+  chatapp-seaweed:

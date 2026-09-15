@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -139,6 +140,11 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		// setelah timeout jaringan mengembalikan pesan yang sama, bukan duplikat.
 		ID   uuid.UUID `json:"id"`
 		Body string    `json:"body"`
+		// AttachmentIDs menunjuk berkas yang sudah diunggah lebih dulu lewat
+		// POST /api/attachments. Pemisahan itu disengaja: unggahan bisa lama
+		// dan bisa gagal sendiri, sedangkan pengiriman pesan harus tetap satu
+		// tindakan yang cepat dan punya jawaban pasti.
+		AttachmentIDs []uuid.UUID `json:"attachmentIds"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "body tidak valid")
@@ -151,7 +157,9 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Body = strings.TrimSpace(req.Body)
-	if req.Body == "" {
+	// Pesan boleh tanpa teks ASALKAN membawa lampiran — mengirim foto tanpa
+	// keterangan adalah hal yang paling biasa dilakukan orang.
+	if req.Body == "" && len(req.AttachmentIDs) == 0 {
 		writeError(w, http.StatusBadRequest, "pesan kosong")
 		return
 	}
@@ -159,16 +167,41 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "pesan terlalu panjang")
 		return
 	}
+	if len(req.AttachmentIDs) > maxAttachmentsPerMessage {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("maksimal %d lampiran per pesan", maxAttachmentsPerMessage))
+		return
+	}
+	if hasDuplicate(req.AttachmentIDs) {
+		// Lampiran yang sama disebut dua kali akan lolos UPDATE pertama lalu
+		// gagal dihitung — ditolak di sini supaya pesannya tidak batal di
+		// tengah transaksi karena kesalahan yang gampang dikenali.
+		writeError(w, http.StatusBadRequest, "lampiran yang sama disebut lebih dari sekali")
+		return
+	}
 
-	msg, created, err := s.store.SendMessage(r.Context(), req.ID, convID, me.ID, req.Body)
+	msg, created, err := s.store.SendMessage(r.Context(), req.ID, convID, me.ID, req.Body, req.AttachmentIDs)
 	if err != nil {
 		s.writeStoreError(w, err, "send message")
 		return
 	}
 
-	// Kirim ulang yang duplikat tidak disiarkan lagi — penerima sudah punya.
+	// Kirim ulang yang duplikat tidak disiarkan lagi — penerima sudah punya,
+	// dan membangunkan orang dua kali untuk satu pesan adalah bug yang hanya
+	// muncul pada jaringan buruk, yaitu justru saat retry paling sering
+	// terjadi.
 	if created {
-		s.publishToMembers(r, convID, hub.Event{Type: hub.EventMessageNew, Payload: msg})
+		// Daftar anggota diambil SEKALI lalu dipakai dua kali. Ini jalur
+		// terpanas di aplikasi — satu query per pesan terkirim, dikali jumlah
+		// orang yang mengetik — dan mengambilnya dua kali untuk jawaban yang
+		// sama persis adalah biaya yang tidak membeli apa pun.
+		members, err := s.store.MemberIDs(r.Context(), convID)
+		if err != nil {
+			s.log.Error("ambil anggota untuk siaran", "conversation", convID, "err", err)
+		} else {
+			s.hub.Publish(members, hub.Event{Type: hub.EventMessageNew, Payload: msg})
+			s.notifyOffline(r, msg, me, members)
+		}
 	}
 	writeJSON(w, http.StatusCreated, msg)
 }
@@ -280,6 +313,18 @@ func (s *Server) authorizedConversation(w http.ResponseWriter, r *http.Request) 
 		return uuid.Nil, false
 	}
 	return convID, true
+}
+
+// hasDuplicate melaporkan apakah ada id yang disebut lebih dari sekali.
+func hasDuplicate(ids []uuid.UUID) bool {
+	seen := make(map[uuid.UUID]struct{}, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			return true
+		}
+		seen[id] = struct{}{}
+	}
+	return false
 }
 
 func (s *Server) publishToMembers(r *http.Request, convID uuid.UUID, ev hub.Event) {

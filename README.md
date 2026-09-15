@@ -1,18 +1,21 @@
 # Chat App
 
 Aplikasi chat realtime. Go + PostgreSQL di backend, Bun + React di frontend.
-Mendukung DM 1-on-1 dan grup, presence, typing indicator, read receipt, serta
-edit & hapus pesan.
+Mendukung DM 1-on-1 dan grup, presence, typing indicator, read receipt, edit &
+hapus pesan, lampiran berkas, serta push notification untuk yang sedang tidak
+membuka aplikasi.
 
 Status: **MVP jalan end-to-end, dan sudah diuji untuk 1000 koneksi bersamaan.**
-Catatan operasional multi-instance ada di [docs/scaling.md](docs/scaling.md).
+Catatan operasional multi-instance ada di [docs/scaling.md](docs/scaling.md);
+keputusan seputar lampiran dan notifikasi di
+[docs/lampiran-dan-push.md](docs/lampiran-dan-push.md).
 
 ## Menjalankan
 
 Butuh Go 1.26+, Bun, dan Docker.
 
 ```bash
-# 1. Database (+ Redis, cuma dipakai kalau menjalankan lebih dari satu instance)
+# 1. Infrastruktur: Postgres, Redis (multi-instance), SeaweedFS (lampiran)
 docker compose up -d
 
 # 2. Backend (migrasi jalan otomatis saat start)
@@ -22,9 +25,28 @@ cd server && go run ./cmd/server        # http://localhost:8090
 cd web && bun install && bun run dev    # http://localhost:5174
 ```
 
-Tanpa `REDIS_URL`, aplikasi jalan sebagai satu instance dengan hub dan rate limit
-di memori proses — itu mode yang paling enak untuk pengembangan. Untuk
-menjalankan beberapa instance sekaligus, lihat [docs/scaling.md](docs/scaling.md).
+Tiga bagian bisa dimatikan lewat satu variabel lingkungan, dan aplikasi tetap
+utuh sebagai chat tanpa ketiganya:
+
+| Kosongkan | Akibatnya |
+|---|---|
+| `REDIS_URL` | Satu instance: hub dan rate limit memakai memori proses |
+| `SEAWEED_FILER_URL` | Lampiran mati, tombolnya hilang dari UI |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Notifikasi mati, tombolnya hilang |
+
+Itu mode yang paling enak untuk pengembangan: `go run` cukup untuk menjalankan
+seluruh aplikasi. Untuk beberapa instance sekaligus, lihat
+[docs/scaling.md](docs/scaling.md).
+
+Untuk menyalakan notifikasi, buat sepasang kunci SEKALI lalu simpan di `.env`:
+
+```bash
+cd server && go run ./cmd/vapid
+```
+
+Jangan membuatnya ulang: browser mengunci langganannya pada kunci publik yang
+dipakai saat mendaftar, jadi kunci baru membuat seluruh langganan yang sudah ada
+berhenti bekerja diam-diam.
 
 Buka dua jendela browser berbeda (satu normal, satu incognito), daftar dua akun,
 lalu mulai percakapan.
@@ -43,21 +65,27 @@ project lain yang biasanya sudah memakai port itu. Ubah lewat `.env`
 server/
   cmd/server/          entry point, shutdown bertahap untuk rolling deploy
   cmd/loadtest/        alat uji beban: 1000 koneksi + ukur latensi fan-out
+  cmd/vapid/           pembuat kunci VAPID, dijalankan sekali saat menyiapkan
   internal/config/     konfigurasi dari env
   internal/migrations/ skema SQL + migrator embedded (tanpa tool eksternal)
   internal/store/      akses database (pgx, SQL manual)
   internal/auth/       argon2id + token sesi
   internal/hub/        fan-out event realtime — memori proses atau Redis pub/sub
   internal/ratelimit/  token bucket per user, lokal atau dibagi lewat Redis
+  internal/blob/       penyimpanan isi lampiran (SeaweedFS lewat filer-nya)
+  internal/push/       notifikasi Web Push: siapa yang layak dibangunkan, kapan
   internal/metrics/    seluruh instrumen Prometheus di satu tempat
   internal/ws/         satu koneksi WebSocket: heartbeat, backpressure, resume
   internal/api/        routing HTTP, middleware, handler
 web/
+  public/sw.js         service worker: hanya notifikasi, tanpa cache sama sekali
   src/api.ts           client REST
   src/useSocket.ts     koneksi WS: reconnect + resume
-  src/store.ts         state global (zustand), termasuk kiriman optimistik
+  src/push.ts          izin notifikasi + langganan Web Push
+  src/store.ts         state global (zustand), kiriman optimistik + unggahan
   src/components/      UI
 docs/scaling.md        catatan operasional multi-instance
+docs/lampiran-dan-push.md  keputusan seputar lampiran dan notifikasi
 ```
 
 ## Keputusan desain
@@ -132,6 +160,46 @@ Selain itu:
   — dan itu terjadi persis setelah rolling deploy, saat semua orang menyusul
   bersamaan.
 
+- **Isi lampiran hanya bisa diambil lewat server ini.** Penyimpanan objek tidak
+  tahu apa-apa tentang keanggotaan percakapan, jadi satu-satunya tempat yang bisa
+  menjawab "boleh tidak orang ini membaca berkas ini" adalah server yang
+  menyimpan keanggotaannya. SeaweedFS tidak pernah terjangkau dari internet, dan
+  yang tidak berhak mendapat 404 — bukan 403, karena membedakan keduanya berarti
+  memberi tahu orang asing bahwa berkas itu ada.
+- **Tipe lampiran ditentukan dari isinya, dan hanya empat tipe gambar yang
+  disajikan inline.** Lampiran keluar dari origin yang sama dengan aplikasi, jadi
+  berkas yang bisa dieksekusi browser — HTML, dan terutama SVG — akan berjalan
+  sebagai bagian dari aplikasi ini kalau dibuka inline. Selebihnya dipaksa
+  terunduh, dengan `nosniff` dan CSP sebagai lapis berikutnya.
+- **Unggah dipisah dari kirim pesan.** Berkas sepuluh megabyte butuh waktu dan
+  bisa putus di tengah; mengirim pesan harus tetap satu tindakan cepat yang
+  jawabannya pasti. Kalau digabung, jaringan yang putus pada detik terakhir ikut
+  membatalkan teks yang sudah diketik orang.
+- **Notifikasi hanya untuk yang benar-benar offline, dan satu percakapan tidak
+  berbunyi berkali-kali.** Peredamnya memakai token bucket yang sama dengan kuota
+  — termasuk versi Redis-nya, sehingga dua instance tidak membangunkan orang yang
+  sama dua kali untuk percakapan yang sama.
+
+Uraian lengkap keduanya di [docs/lampiran-dan-push.md](docs/lampiran-dan-push.md).
+
+## Lampiran
+
+```
+POST   /api/attachments?w=&h=     multipart, field "file" → objek Attachment
+GET    /api/attachments/{id}      isi berkasnya, hanya untuk yang berhak
+```
+
+Id yang dikembalikan disebut di `attachmentIds` saat mengirim pesan. Satu pesan
+boleh membawa sampai sepuluh lampiran, dan boleh tanpa teks sama sekali.
+
+## Notifikasi
+
+```
+GET    /api/push/config           { enabled, publicKey }
+POST   /api/push/subscribe        langganan dari browser
+POST   /api/push/unsubscribe      { endpoint }
+```
+
 ## Protokol WebSocket
 
 Client -> server:
@@ -179,3 +247,8 @@ cd web && bun run typecheck
 RATE_AUTH_PER_MIN=100000 RATE_AUTH_BURST=2000 go run ./cmd/server
 go run ./cmd/loadtest -users 1000 -rate 50 -duration 60s
 ```
+
+Test unit menutup hal-hal yang keliru diam-diam: fan-out dan backpressure hub,
+token bucket, percakapan dengan filer SeaweedFS, penyaringan penerima notifikasi
+(online dan peredam dering), serta penyusunan kunci penyimpanan lampiran — yang
+terakhir memastikan nama berkas kiriman tidak pernah ikut menentukan lokasi.

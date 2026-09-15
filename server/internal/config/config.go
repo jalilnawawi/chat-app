@@ -42,6 +42,36 @@ type Config struct {
 
 	DBMaxConns int32
 
+	// ---- lampiran (Fase 7) ----
+	// FilerURL kosong berarti lampiran dimatikan: aplikasi tetap jalan penuh
+	// sebagai chat teks. Pola yang sama dengan REDIS_URL — satu variabel
+	// menentukan apakah sebuah bagian infrastruktur ikut dipakai, dan tidak ada
+	// jalur kode yang setengah hidup.
+	FilerURL    string
+	FilerPrefix string
+
+	// MaxUploadBytes membatasi satu berkas. Ini batas KERAS di sisi server;
+	// client memeriksa lebih dulu hanya supaya orang tidak menunggu unggahan
+	// yang sudah pasti ditolak.
+	MaxUploadBytes int64
+
+	// OrphanTTL adalah umur lampiran yang sudah diunggah tapi tidak pernah jadi
+	// dikirim, sebelum dibuang. Cukup panjang untuk orang yang menulis pesan
+	// panjang sambil melampirkan foto, cukup pendek supaya sampah tidak
+	// menumpuk berbulan-bulan.
+	OrphanTTL time.Duration
+
+	// ---- push notification (Fase 7) ----
+	// Kunci kosong berarti notifikasi dimatikan. Kunci dibuat sekali lalu
+	// disimpan: menggantinya membatalkan SEMUA langganan yang sudah ada,
+	// karena browser mengunci langganannya pada kunci publik yang dipakai saat
+	// mendaftar. Buat sepasang dengan `go run ./cmd/vapid`.
+	VAPIDPublicKey  string
+	VAPIDPrivateKey string
+	// VAPIDSubject adalah kontak yang bisa dihubungi operator layanan push
+	// bila server ini bermasalah. Wajib berupa mailto: atau https:.
+	VAPIDSubject string
+
 	// ---- shutdown bertahap ----
 	// DrainDelay: jeda antara /readyz mulai menjawab 503 dan koneksi mulai
 	// ditutup. Load balancer butuh beberapa detik untuk berhenti mengirim
@@ -58,6 +88,12 @@ type Config struct {
 	ConnectRate ratelimit.Rule
 	TypingRate  ratelimit.Rule
 	AuthRate    ratelimit.Rule
+	UploadRate  ratelimit.Rule
+	// PushRate bukan kuota melawan penyalahgunaan, melainkan peredam dering:
+	// berapa kali sebuah percakapan boleh membangunkan satu orang. Bentuknya
+	// token bucket yang sama karena masalahnya memang sama — dan versi
+	// Redis-nya membuat peredam itu berlaku lintas instance.
+	PushRate ratelimit.Rule
 }
 
 const defaultOrigins = "http://localhost:5174,http://127.0.0.1:5174,http://[::1]:5174"
@@ -70,6 +106,13 @@ func Load() (Config, error) {
 		RedisURL:       os.Getenv("REDIS_URL"),
 		InstanceID:     env("INSTANCE_ID", defaultInstanceID()),
 		MetricsAddr:    env("METRICS_ADDR", ":9091"),
+
+		FilerURL:    os.Getenv("SEAWEED_FILER_URL"),
+		FilerPrefix: env("SEAWEED_PREFIX", "/chat/attachments"),
+
+		VAPIDPublicKey:  os.Getenv("VAPID_PUBLIC_KEY"),
+		VAPIDPrivateKey: os.Getenv("VAPID_PRIVATE_KEY"),
+		VAPIDSubject:    env("VAPID_SUBJECT", "mailto:admin@example.com"),
 	}
 
 	if len(c.AllowedOrigins) == 0 {
@@ -93,11 +136,24 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	if c.OrphanTTL, err = envDuration("ATTACHMENT_ORPHAN_TTL", 6*time.Hour); err != nil {
+		return Config{}, err
+	}
+
 	maxConns, err := envInt("DB_MAX_CONNS", 0)
 	if err != nil {
 		return Config{}, err
 	}
 	c.DBMaxConns = int32(maxConns)
+
+	maxUpload, err := envInt("MAX_UPLOAD_BYTES", 10<<20)
+	if err != nil {
+		return Config{}, err
+	}
+	if maxUpload < 1 {
+		return Config{}, fmt.Errorf("MAX_UPLOAD_BYTES harus positif")
+	}
+	c.MaxUploadBytes = int64(maxUpload)
 
 	// Nilai default dipilih dari perilaku manusia, bukan angka bulat yang enak
 	// dilihat: 120 pesan per menit adalah dua pesan per detik terus-menerus —
@@ -118,6 +174,28 @@ func Load() (Config, error) {
 	if c.AuthRate, err = envRule("RATE_AUTH", 10, 30); err != nil {
 		return Config{}, err
 	}
+	// Unggahan jauh lebih mahal dari pesan teks — satu berkas bisa sepuluh
+	// megabyte yang melewati proses ini dua kali, masuk dan keluar.
+	if c.UploadRate, err = envRule("RATE_UPLOADS", 10, 60); err != nil {
+		return Config{}, err
+	}
+	// Satu dering per percakapan tiap 30 detik, dengan kelonggaran dua di awal
+	// supaya kabar pertama tidak pernah tertelan. Angkanya dipilih dari cara
+	// orang membalas pesan, bukan dari kemampuan server mengirim.
+	if c.PushRate, err = envRule("RATE_PUSH", 2, 2); err != nil {
+		return Config{}, err
+	}
+
+	// Satu kunci terisi dan satu kosong hampir selalu berarti salah salin, dan
+	// akibatnya adalah fitur yang diam-diam mati padahal terlihat dikonfigurasi.
+	// Lebih baik gagal saat start daripada baru ketahuan saat seseorang
+	// mengeluh notifikasinya tidak pernah datang.
+	if (c.VAPIDPublicKey == "") != (c.VAPIDPrivateKey == "") {
+		return Config{}, fmt.Errorf("VAPID_PUBLIC_KEY dan VAPID_PRIVATE_KEY harus diisi berdua atau dikosongkan berdua")
+	}
+	if c.Push() && !strings.HasPrefix(c.VAPIDSubject, "mailto:") && !strings.HasPrefix(c.VAPIDSubject, "https://") {
+		return Config{}, fmt.Errorf("VAPID_SUBJECT harus diawali mailto: atau https://")
+	}
 
 	if c.ShutdownTimeout <= c.DrainDelay+c.DrainPeriod {
 		return Config{}, fmt.Errorf(
@@ -131,6 +209,12 @@ func Load() (Config, error) {
 // MultiInstance melaporkan apakah konfigurasi ini siap dijalankan lebih dari
 // satu proses sekaligus.
 func (c Config) MultiInstance() bool { return c.RedisURL != "" }
+
+// Attachments melaporkan apakah unggahan lampiran menyala.
+func (c Config) Attachments() bool { return c.FilerURL != "" }
+
+// Push melaporkan apakah notifikasi menyala.
+func (c Config) Push() bool { return c.VAPIDPublicKey != "" && c.VAPIDPrivateKey != "" }
 
 // AllowsOrigin melaporkan apakah origin permintaan termasuk yang diizinkan.
 func (c Config) AllowsOrigin(origin string) bool {

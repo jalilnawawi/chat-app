@@ -231,12 +231,13 @@ func (s *Store) CreateGroup(ctx context.Context, creator uuid.UUID, title string
 func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conversation, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT c.id, c.type, c.title, c.last_seq, cm.last_read_seq, c.created_at,
-		       lm.id, lm.seq, lm.sender_id, lm.body, lm.created_at, lm.edited_at, lm.deleted_at,
+		       lm.id, lm.seq, lm.sender_id, lm.body, lm.attachments,
+		       lm.created_at, lm.edited_at, lm.deleted_at,
 		       peer.id, peer.username, peer.display_name, peer.created_at
 		FROM conversation_members cm
 		JOIN conversations c ON c.id = cm.conversation_id
 		LEFT JOIN LATERAL (
-			SELECT id, seq, sender_id, body, created_at, edited_at, deleted_at
+			SELECT id, seq, sender_id, body, attachments, created_at, edited_at, deleted_at
 			FROM messages WHERE conversation_id = c.id
 			ORDER BY seq DESC LIMIT 1
 		) lm ON true
@@ -263,6 +264,7 @@ func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conv
 			msgSeq   *int64
 			msgFrom  *uuid.UUID
 			msgBody  *string
+			msgAtt   []Attachment
 			msgAt    *time.Time
 			msgEdit  *time.Time
 			msgDel   *time.Time
@@ -273,7 +275,7 @@ func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conv
 		)
 		if err := rows.Scan(
 			&c.ID, &c.Type, &c.Title, &c.LastSeq, &c.LastReadSeq, &created,
-			&msgID, &msgSeq, &msgFrom, &msgBody, &msgAt, &msgEdit, &msgDel,
+			&msgID, &msgSeq, &msgFrom, &msgBody, &msgAtt, &msgAt, &msgEdit, &msgDel,
 			&peerID, &peerUser, &peerName, &peerAt,
 		); err != nil {
 			return nil, err
@@ -285,7 +287,8 @@ func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conv
 		if msgID != nil {
 			c.LastMessage = &Message{
 				ID: *msgID, ConversationID: c.ID, Seq: *msgSeq, SenderID: *msgFrom,
-				Body: *msgBody, CreatedAt: *msgAt, EditedAt: msgEdit, DeletedAt: msgDel,
+				Body: *msgBody, Attachments: msgAtt,
+				CreatedAt: *msgAt, EditedAt: msgEdit, DeletedAt: msgDel,
 			}
 			c.UpdatedAt = *msgAt
 		}
@@ -372,6 +375,22 @@ func (s *Store) ConversationsOf(ctx context.Context, userID uuid.UUID) ([]uuid.U
 
 // ---------- messages ----------
 
+// messageCols adalah satu-satunya tempat daftar kolom pesan ditulis.
+//
+// Sebelumnya daftar ini diulang di enam query, dan menambah satu kolom berarti
+// mengubah enam tempat sekaligus enam urutan Scan yang harus tetap cocok.
+// Menambahkan `attachments` di Fase 7 adalah kali pertama itu benar-benar
+// diuji — dan yang membuatnya aman adalah daftar kolom dan urutan Scan hidup
+// bersebelahan di bawah ini.
+const messageCols = `id, conversation_id, seq, sender_id, body, attachments,
+                     created_at, edited_at, deleted_at`
+
+// scanMessage menerima pgx.Row maupun pgx.Rows — keduanya punya Scan yang sama.
+func scanMessage(row pgx.Row, m *Message) error {
+	return row.Scan(&m.ID, &m.ConversationID, &m.Seq, &m.SenderID, &m.Body,
+		&m.Attachments, &m.CreatedAt, &m.EditedAt, &m.DeletedAt)
+}
+
 // SendMessage menyisipkan pesan dan mengalokasikan `seq` berikutnya.
 //
 // Idempoten: `id` datang dari client, jadi pengiriman ulang setelah timeout
@@ -381,7 +400,11 @@ func (s *Store) ConversationsOf(ctx context.Context, userID uuid.UUID) ([]uuid.U
 // SELECT ... FOR UPDATE mengunci baris percakapan sehingga pengiriman serentak
 // di ruang yang sama diserialisasi — `seq` dijamin berurutan tanpa lompatan,
 // dan pengecekan duplikat di dalam kunci selalu akurat.
-func (s *Store) SendMessage(ctx context.Context, id, convID, senderID uuid.UUID, body string) (Message, bool, error) {
+//
+// attachmentIDs menunjuk lampiran yang sudah diunggah lebih dulu. Pemasangannya
+// ikut di dalam transaksi yang sama: sebuah pesan tidak boleh pernah terlihat
+// tanpa lampiran yang menyertainya, sekalipun untuk sepersekian detik.
+func (s *Store) SendMessage(ctx context.Context, id, convID, senderID uuid.UUID, body string, attachmentIDs []uuid.UUID) (Message, bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Message{}, false, err
@@ -399,11 +422,8 @@ func (s *Store) SendMessage(ctx context.Context, id, convID, senderID uuid.UUID,
 	}
 
 	var existing Message
-	err = tx.QueryRow(ctx, `
-		SELECT id, conversation_id, seq, sender_id, body, created_at, edited_at, deleted_at
-		FROM messages WHERE id = $1`, id,
-	).Scan(&existing.ID, &existing.ConversationID, &existing.Seq, &existing.SenderID,
-		&existing.Body, &existing.CreatedAt, &existing.EditedAt, &existing.DeletedAt)
+	err = scanMessage(tx.QueryRow(ctx,
+		`SELECT `+messageCols+` FROM messages WHERE id = $1`, id), &existing)
 	if err == nil {
 		if existing.ConversationID != convID || existing.SenderID != senderID {
 			return Message{}, false, ErrConflict
@@ -415,13 +435,29 @@ func (s *Store) SendMessage(ctx context.Context, id, convID, senderID uuid.UUID,
 	}
 
 	seq := lastSeq + 1
-	m := Message{ID: id, ConversationID: convID, Seq: seq, SenderID: senderID, Body: body}
+	m := Message{
+		ID: id, ConversationID: convID, Seq: seq, SenderID: senderID,
+		Body: body, Attachments: []Attachment{},
+	}
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO messages (id, conversation_id, seq, sender_id, body)
 		VALUES ($1, $2, $3, $4, $5) RETURNING created_at`,
 		id, convID, seq, senderID, body,
 	).Scan(&m.CreatedAt); err != nil {
 		return Message{}, false, fmt.Errorf("insert message: %w", err)
+	}
+
+	// Lampiran dipasang setelah baris pesan ada — foreign key-nya menuntut itu —
+	// lalu hasilnya disalin ke kolom jsonb milik pesan. Salinan itu yang dibaca
+	// saat menampilkan riwayat, sehingga memuat seratus pesan tetap satu query.
+	if m.Attachments, err = claimAttachments(ctx, tx, id, senderID, attachmentIDs); err != nil {
+		return Message{}, false, err
+	}
+	if len(m.Attachments) > 0 {
+		if _, err := tx.Exec(ctx,
+			`UPDATE messages SET attachments = $1 WHERE id = $2`, m.Attachments, id); err != nil {
+			return Message{}, false, fmt.Errorf("simpan lampiran pesan: %w", err)
+		}
 	}
 
 	if _, err := tx.Exec(ctx,
@@ -448,9 +484,7 @@ func (s *Store) SendMessage(ctx context.Context, id, convID, senderID uuid.UUID,
 // (lama -> baru) supaya client bisa langsung menempelkannya ke atas daftar.
 func (s *Store) ListMessages(ctx context.Context, convID uuid.UUID, beforeSeq int64, limit int) ([]Message, error) {
 	var sb strings.Builder
-	sb.WriteString(`
-		SELECT id, conversation_id, seq, sender_id, body, created_at, edited_at, deleted_at
-		FROM messages WHERE conversation_id = $1`)
+	sb.WriteString(`SELECT ` + messageCols + ` FROM messages WHERE conversation_id = $1`)
 	args := []any{convID}
 	if beforeSeq > 0 {
 		sb.WriteString(` AND seq < $2`)
@@ -468,8 +502,7 @@ func (s *Store) ListMessages(ctx context.Context, convID uuid.UUID, beforeSeq in
 	out := []Message{}
 	for rows.Next() {
 		var m Message
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Seq, &m.SenderID,
-			&m.Body, &m.CreatedAt, &m.EditedAt, &m.DeletedAt); err != nil {
+		if err := scanMessage(rows, &m); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -487,7 +520,7 @@ func (s *Store) ListMessages(ctx context.Context, convID uuid.UUID, beforeSeq in
 // MessagesSince dipakai saat client reconnect: kirim semua yang terlewat.
 func (s *Store) MessagesSince(ctx context.Context, convID uuid.UUID, afterSeq int64, limit int) ([]Message, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, conversation_id, seq, sender_id, body, created_at, edited_at, deleted_at
+		SELECT `+messageCols+`
 		FROM messages WHERE conversation_id = $1 AND seq > $2
 		ORDER BY seq ASC LIMIT $3`, convID, afterSeq, limit)
 	if err != nil {
@@ -498,8 +531,7 @@ func (s *Store) MessagesSince(ctx context.Context, convID uuid.UUID, afterSeq in
 	out := []Message{}
 	for rows.Next() {
 		var m Message
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Seq, &m.SenderID,
-			&m.Body, &m.CreatedAt, &m.EditedAt, &m.DeletedAt); err != nil {
+		if err := scanMessage(rows, &m); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -509,12 +541,10 @@ func (s *Store) MessagesSince(ctx context.Context, convID uuid.UUID, afterSeq in
 
 func (s *Store) EditMessage(ctx context.Context, id, senderID uuid.UUID, body string) (Message, error) {
 	var m Message
-	err := s.pool.QueryRow(ctx, `
+	err := scanMessage(s.pool.QueryRow(ctx, `
 		UPDATE messages SET body = $1, edited_at = now()
 		WHERE id = $2 AND sender_id = $3 AND deleted_at IS NULL
-		RETURNING id, conversation_id, seq, sender_id, body, created_at, edited_at, deleted_at`,
-		body, id, senderID,
-	).Scan(&m.ID, &m.ConversationID, &m.Seq, &m.SenderID, &m.Body, &m.CreatedAt, &m.EditedAt, &m.DeletedAt)
+		RETURNING `+messageCols, body, id, senderID), &m)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Message{}, ErrForbidden
@@ -527,20 +557,39 @@ func (s *Store) EditMessage(ctx context.Context, id, senderID uuid.UUID, body st
 
 // DeleteMessage adalah soft delete: baris tetap ada agar `seq` tidak bolong dan
 // client yang sedang offline tetap bisa menyinkronkan status "dihapus".
+//
+// Lampirannya tidak ikut soft delete. Menghapus pesan berarti isinya benar-benar
+// pergi, dan berkas yang tertinggal di penyimpanan tidak akan pernah bisa
+// dibuang lewat UI mana pun — tidak ada layar yang bisa menampilkannya lagi.
+// Melepas `message_id` mengembalikannya ke keadaan yatim, dan penyapu yang sudah
+// ada akan membuangnya setelah lewat umur.
 func (s *Store) DeleteMessage(ctx context.Context, id, senderID uuid.UUID) (Message, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Message{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
 	var m Message
-	err := s.pool.QueryRow(ctx, `
-		UPDATE messages SET body = '', deleted_at = now()
+	err = scanMessage(tx.QueryRow(ctx, `
+		UPDATE messages SET body = '', attachments = '[]'::jsonb, deleted_at = now()
 		WHERE id = $1 AND sender_id = $2 AND deleted_at IS NULL
-		RETURNING id, conversation_id, seq, sender_id, body, created_at, edited_at, deleted_at`,
-		id, senderID,
-	).Scan(&m.ID, &m.ConversationID, &m.Seq, &m.SenderID, &m.Body, &m.CreatedAt, &m.EditedAt, &m.DeletedAt)
+		RETURNING `+messageCols, id, senderID), &m)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Message{}, ErrForbidden
 	}
 	if err != nil {
 		return Message{}, fmt.Errorf("delete message: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE attachments SET message_id = NULL WHERE message_id = $1`, id); err != nil {
+		return Message{}, fmt.Errorf("lepas lampiran pesan: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Message{}, err
 	}
 	return m, nil
 }

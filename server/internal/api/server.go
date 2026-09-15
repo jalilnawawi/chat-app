@@ -17,9 +17,11 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/jalilnawawi/chat-app/server/internal/blob"
 	"github.com/jalilnawawi/chat-app/server/internal/config"
 	"github.com/jalilnawawi/chat-app/server/internal/hub"
 	"github.com/jalilnawawi/chat-app/server/internal/metrics"
+	"github.com/jalilnawawi/chat-app/server/internal/push"
 	"github.com/jalilnawawi/chat-app/server/internal/ratelimit"
 	"github.com/jalilnawawi/chat-app/server/internal/store"
 	"github.com/jalilnawawi/chat-app/server/internal/ws"
@@ -34,6 +36,13 @@ type Server struct {
 	log     *slog.Logger
 	m       *metrics.Metrics
 
+	// blobs nil berarti lampiran dimatikan; push nil berarti notifikasi
+	// dimatikan. Keduanya fitur yang butuh infrastruktur di luar proses ini,
+	// dan aplikasi harus tetap utuh sebagai chat tanpa keduanya — itu yang
+	// membuat `go run ./cmd/server` cukup untuk mengembangkan sisanya.
+	blobs blob.Store
+	push  *push.Dispatcher
+
 	// draining dibaca tiap kali /readyz dipanggil, dari goroutine mana pun.
 	draining atomic.Bool
 }
@@ -43,6 +52,8 @@ func NewServer(
 	st *store.Store,
 	h hub.Broadcaster,
 	limiter ratelimit.Limiter,
+	blobs blob.Store,
+	pusher *push.Dispatcher,
 	log *slog.Logger,
 	m *metrics.Metrics,
 ) *Server {
@@ -54,6 +65,8 @@ func NewServer(
 		ws:      ws.NewHandler(st, h, limiter, cfg.TypingRate, log, m, cfg.AllowedOrigins),
 		log:     log,
 		m:       m,
+		blobs:   blobs,
+		push:    pusher,
 	}
 }
 
@@ -84,6 +97,16 @@ func (s *Server) Routes() http.Handler {
 		s.requireAuth(s.rateLimitByUser("message", s.cfg.MessageRate, http.HandlerFunc(s.handleSendMessage))))
 	mux.Handle("GET /api/conversations/{id}/members", s.requireAuth(http.HandlerFunc(s.handleMembers)))
 	mux.Handle("POST /api/conversations/{id}/read", s.requireAuth(http.HandlerFunc(s.handleMarkRead)))
+
+	// Unggahan punya kuotanya sendiri, jauh lebih ketat dari kirim pesan: satu
+	// berkas bisa sepuluh megabyte yang melewati proses ini dua kali.
+	mux.Handle("POST /api/attachments",
+		s.requireAuth(s.rateLimitByUser("upload", s.cfg.UploadRate, http.HandlerFunc(s.handleUploadAttachment))))
+	mux.Handle("GET /api/attachments/{id}", s.requireAuth(http.HandlerFunc(s.handleDownloadAttachment)))
+
+	mux.Handle("GET /api/push/config", s.requireAuth(http.HandlerFunc(s.handlePushConfig)))
+	mux.Handle("POST /api/push/subscribe", s.requireAuth(http.HandlerFunc(s.handlePushSubscribe)))
+	mux.Handle("POST /api/push/unsubscribe", s.requireAuth(http.HandlerFunc(s.handlePushUnsubscribe)))
 
 	mux.Handle("PATCH /api/messages/{id}", s.requireAuth(http.HandlerFunc(s.handleEditMessage)))
 	mux.Handle("DELETE /api/messages/{id}", s.requireAuth(http.HandlerFunc(s.handleDeleteMessage)))
@@ -129,9 +152,14 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	// Fitur yang bisa dimatikan ikut dilaporkan supaya "kenapa lampirannya
+	// tidak jalan di staging" bisa dijawab dengan satu permintaan, bukan dengan
+	// membaca variabel lingkungan di mesin orang lain.
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":   "ok",
-		"instance": s.cfg.InstanceID,
+		"status":      "ok",
+		"instance":    s.cfg.InstanceID,
+		"attachments": s.blobs != nil,
+		"push":        s.push.Enabled(),
 	})
 }
 

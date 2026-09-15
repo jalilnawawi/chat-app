@@ -14,15 +14,38 @@ type User struct {
 }
 
 type Message struct {
-	ID             uuid.UUID  `json:"id"`
-	ConversationID uuid.UUID  `json:"conversationId"`
-	Seq            int64      `json:"seq"`
-	SenderID       uuid.UUID  `json:"senderId"`
-	Body           string     `json:"body"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	EditedAt       *time.Time `json:"editedAt"`
-	DeletedAt      *time.Time `json:"deletedAt"`
+	ID             uuid.UUID    `json:"id"`
+	ConversationID uuid.UUID    `json:"conversationId"`
+	Seq            int64        `json:"seq"`
+	SenderID       uuid.UUID    `json:"senderId"`
+	Body           string       `json:"body"`
+	Attachments    []Attachment `json:"attachments"`
+	CreatedAt      time.Time    `json:"createdAt"`
+	EditedAt       *time.Time   `json:"editedAt"`
+	DeletedAt      *time.Time   `json:"deletedAt"`
 }
+
+// Attachment adalah bentuk lampiran yang dilihat client — dan sekaligus bentuk
+// yang disalin ke kolom messages.attachments.
+//
+// URL-nya menunjuk ke server ini, bukan ke penyimpanan objek. Itu keputusan
+// utama soal lampiran: SeaweedFS tidak tahu apa-apa tentang keanggotaan
+// percakapan, jadi satu-satunya tempat yang bisa menjawab "boleh tidak orang
+// ini membaca file ini" adalah server yang menyimpan keanggotaannya.
+type Attachment struct {
+	ID     uuid.UUID `json:"id"`
+	URL    string    `json:"url"`
+	Name   string    `json:"name"`
+	MIME   string    `json:"mime"`
+	Size   int64     `json:"size"`
+	Width  *int      `json:"width,omitempty"`
+	Height *int      `json:"height,omitempty"`
+}
+
+// AttachmentURL menyusun alamat unduh sebuah lampiran. Client tidak pernah
+// merangkainya sendiri, supaya bentuk alamatnya bisa berubah tanpa memaksa
+// semua pesan lama ditulis ulang.
+func AttachmentURL(id uuid.UUID) string { return "/api/attachments/" + id.String() }
 
 type Member struct {
 	UserID      uuid.UUID `json:"userId"`

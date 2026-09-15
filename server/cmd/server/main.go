@@ -16,10 +16,12 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/jalilnawawi/chat-app/server/internal/api"
+	"github.com/jalilnawawi/chat-app/server/internal/blob"
 	"github.com/jalilnawawi/chat-app/server/internal/config"
 	"github.com/jalilnawawi/chat-app/server/internal/hub"
 	"github.com/jalilnawawi/chat-app/server/internal/metrics"
 	"github.com/jalilnawawi/chat-app/server/internal/migrations"
+	"github.com/jalilnawawi/chat-app/server/internal/push"
 	"github.com/jalilnawawi/chat-app/server/internal/ratelimit"
 	"github.com/jalilnawawi/chat-app/server/internal/store"
 )
@@ -104,9 +106,24 @@ func run(cfg config.Config, log *slog.Logger) error {
 		closeRedis()
 	}()
 
+	// ---------- lampiran & notifikasi ----------
+
+	blobs, err := buildBlobStore(ctx, cfg, log)
+	if err != nil {
+		return err
+	}
+
+	pusher := push.New(st, broadcaster, limiter, cfg.PushRate,
+		cfg.VAPIDPublicKey, cfg.VAPIDPrivateKey, cfg.VAPIDSubject, log, m)
+	if pusher.Enabled() {
+		log.Info("push notification aktif", "subject", cfg.VAPIDSubject)
+	} else {
+		log.Info("push notification mati: VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY belum diisi")
+	}
+
 	// ---------- server ----------
 
-	srv := api.NewServer(cfg, st, broadcaster, limiter, log, m)
+	srv := api.NewServer(cfg, st, broadcaster, limiter, blobs, pusher, log, m)
 
 	httpSrv := &http.Server{
 		Addr:    cfg.HTTPAddr,
@@ -126,6 +143,7 @@ func run(cfg config.Config, log *slog.Logger) error {
 	}
 
 	janitorDone := startSessionJanitor(ctx, st, log)
+	sweeperDone := startAttachmentSweeper(ctx, cfg, st, blobs, log, m)
 
 	errCh := make(chan error, 2)
 	go func() {
@@ -152,8 +170,122 @@ func run(cfg config.Config, log *slog.Logger) error {
 	}
 
 	shutdown(cfg, srv, httpSrv, metricsSrv, broadcaster, log)
+
+	// Notifikasi ditutup SETELAH koneksi dikuras, bukan sebelumnya. Pesan yang
+	// masuk di detik-detik terakhir tetap pantas sampai ke orang yang sedang
+	// tidak membuka aplikasi — dan justru saat itulah paling banyak orang
+	// berstatus offline, karena koneksinya baru saja ditutup oleh drain.
+	pusher.Close()
+
 	<-janitorDone
+	<-sweeperDone
 	return nil
+}
+
+// buildBlobStore menyiapkan penyimpanan lampiran, atau nil bila dimatikan.
+//
+// Filer diperiksa sekali saat start, bukan dibiarkan ketahuan nanti: kesalahan
+// alamat atau container yang belum jalan lebih baik muncul sebagai satu baris
+// log saat menyalakan server daripada sebagai unggahan yang gagal di tangan
+// orang pertama yang mencoba.
+func buildBlobStore(ctx context.Context, cfg config.Config, log *slog.Logger) (blob.Store, error) {
+	if !cfg.Attachments() {
+		log.Info("lampiran mati: SEAWEED_FILER_URL belum diisi")
+		return nil, nil
+	}
+
+	s, err := blob.NewSeaweed(cfg.FilerURL, cfg.FilerPrefix)
+	if err != nil {
+		return nil, err
+	}
+
+	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := s.Ping(pingCtx); err != nil {
+		return nil, errors.New("tidak bisa terhubung ke SeaweedFS — sudah jalan `docker compose up -d`? (" + err.Error() + ")")
+	}
+
+	log.Info("lampiran aktif", "filer", cfg.FilerURL, "prefix", cfg.FilerPrefix)
+	return s, nil
+}
+
+// startAttachmentSweeper membuang lampiran yang diunggah tapi tidak pernah jadi
+// dikirim.
+//
+// Berkas seperti ini lahir dari hal yang sepenuhnya normal: orang memilih foto,
+// lalu berubah pikiran dan menutup tab. Tanpa penyapu, tiap keraguan itu
+// meninggalkan berkas permanen yang tidak pernah dilihat siapa pun dan tidak
+// pernah bisa dihapus lewat UI mana pun — karena tidak ada UI yang bisa
+// menampilkannya.
+func startAttachmentSweeper(
+	ctx context.Context,
+	cfg config.Config,
+	st *store.Store,
+	blobs blob.Store,
+	log *slog.Logger,
+	m *metrics.Metrics,
+) <-chan struct{} {
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		if blobs == nil {
+			return
+		}
+
+		ticker := time.NewTicker(30 * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				sweepOrphans(ctx, cfg, st, blobs, log, m)
+			}
+		}
+	}()
+
+	return done
+}
+
+// sweepOrphans mengambil sebagian kecil lampiran yatim tiap putaran.
+//
+// Batas 200 per putaran bukan kehati-hatian berlebihan: beberapa instance
+// menjalankan penyapu ini bersamaan, dan tiap berkas yang dibuang adalah satu
+// permintaan HTTP ke penyimpanan. Menyapu ribuan sekaligus berarti membebani
+// penyimpanan yang sama yang sedang melayani orang membuka gambar.
+func sweepOrphans(
+	ctx context.Context,
+	cfg config.Config,
+	st *store.Store,
+	blobs blob.Store,
+	log *slog.Logger,
+	m *metrics.Metrics,
+) {
+	opCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	orphans, err := st.TakeOrphanAttachments(opCtx, cfg.OrphanTTL, 200)
+	if err != nil {
+		log.Warn("mengambil lampiran yatim gagal", "err", err)
+		return
+	}
+	if len(orphans) == 0 {
+		return
+	}
+
+	for _, o := range orphans {
+		if err := blobs.Delete(opCtx, o.StorageKey); err != nil {
+			// Barisnya sudah terhapus, jadi ini tidak akan dicoba lagi. Yang
+			// tertinggal adalah berkas tanpa penunjuk — tidak terlihat siapa
+			// pun, tapi tetap memakan ruang, jadi dicatat supaya bisa dihitung.
+			log.Warn("membuang isi lampiran yatim gagal", "key", o.StorageKey, "err", err)
+			continue
+		}
+		m.AttachmentSwept.Inc()
+	}
+	log.Info("lampiran yatim dibuang", "jumlah", len(orphans))
 }
 
 // buildBackplane memilih antara mode satu instance dan multi-instance.
