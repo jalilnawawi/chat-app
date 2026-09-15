@@ -26,7 +26,11 @@ function preview(c: Conversation): string {
   const atts = last.attachments ?? [];
   if (atts.length === 0) return '';
   if (atts.length > 1) return `📎 ${atts.length} lampiran`;
-  return atts[0]!.mime.startsWith('image/') ? '📷 Gambar' : `📎 ${atts[0]!.name}`;
+  const a = atts[0]!;
+  if (a.mime.startsWith('image/')) return '📷 Gambar';
+  if (a.mime.startsWith('video/')) return '🎬 Video';
+  if (a.mime.startsWith('audio/')) return '🎵 Rekaman suara';
+  return `📎 ${a.name}`;
 }
 
 export default function Sidebar() {

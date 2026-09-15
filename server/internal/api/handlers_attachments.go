@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/jalilnawawi/chat-app/server/internal/blob"
+	"github.com/jalilnawawi/chat-app/server/internal/imaging"
 	"github.com/jalilnawawi/chat-app/server/internal/store"
 )
 
@@ -46,6 +47,33 @@ var inlineTypes = map[string]bool{
 	"image/gif":  true,
 	"image/webp": true,
 }
+
+// playableTypes adalah rekaman yang boleh diputar di dalam halaman.
+//
+// Menambah tipe ke daftar inline adalah keputusan keamanan, jadi alasannya
+// harus sama kuatnya dengan yang di atas: tidak satu pun format ini punya
+// kemampuan mengeksekusi apa pun. Tidak ada script di dalam MP4, tidak ada
+// script di dalam MP3 — berbeda dari SVG dan HTML, yang justru DIRANCANG untuk
+// membawa kode dan karena itu tetap dipaksa terunduh.
+//
+// Tanpa daftar ini, membuka video di tab baru berarti mengunduh berkas
+// setengah gigabyte alih-alih memutarnya. Tiga lapis lain — tipe dari isi,
+// nosniff, dan CSP — tetap berlaku persis sama.
+var playableTypes = map[string]bool{
+	"video/mp4":       true,
+	"video/webm":      true,
+	"audio/mpeg":      true,
+	"audio/wave":      true,
+	"application/ogg": true,
+}
+
+// thumbWait adalah berapa lama unggahan mau menunggu giliran mendekode gambar.
+//
+// Habisnya waktu ini BUKAN kegagalan: lampirannya sudah tersimpan dan sudah
+// benar, hanya tanpa turunan. Menunggu lebih lama berarti menahan koneksi orang
+// demi turunan yang bisa hidup tanpanya — dan pada saat server sesibuk itu,
+// menahan koneksi justru yang paling tidak boleh dilakukan.
+const thumbWait = 3 * time.Second
 
 func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) {
 	me := userFrom(r.Context())
@@ -93,7 +121,23 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 	// Byte yang sudah terbaca untuk menebak tipe disambung kembali di depan
 	// sisanya, sehingga penyimpanan menerima berkas utuh tanpa pernah ada
 	// salinan lengkapnya di memori.
-	body := &countingReader{r: io.MultiReader(bytes.NewReader(head), part)}
+	var stream io.Reader = io.MultiReader(bytes.NewReader(head), part)
+
+	// Kecuali untuk gambar yang akan dibuatkan turunan. Turunan menuntut
+	// gambarnya utuh — tidak ada cara memperkecil sesuatu sambil hanya melihat
+	// sepotong kecilnya — jadi khusus untuk itu salinannya memang ditahan.
+	//
+	// Yang menjaga ini tetap terbatas adalah MaxBytesReader di atas: salinan
+	// ini tidak mungkin melewati batas ukuran unggahan, karena body-nya sendiri
+	// tidak mungkin. Untuk berkas selain gambar — justru yang paling besar,
+	// video dan arsip — tidak ada salinan sama sekali, persis seperti sebelumnya.
+	var source *bytes.Buffer
+	if s.cfg.Thumbnails() && inlineTypes[contentType] {
+		source = &bytes.Buffer{}
+		stream = io.TeeReader(stream, source)
+	}
+
+	body := &countingReader{r: stream}
 
 	// Batas waktu sendiri untuk unggahan. Tanpa ini, satu client yang mengirim
 	// satu byte per menit bisa menahan goroutine dan koneksi penyimpanan
@@ -112,19 +156,33 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	att := store.Attachment{
-		ID:   id,
-		URL:  store.AttachmentURL(id),
-		Name: safeName(filename),
-		MIME: contentType,
-		Size: body.n,
+	sa := store.StoredAttachment{
+		Attachment: store.Attachment{
+			ID:   id,
+			URL:  store.AttachmentURL(id),
+			Name: safeName(filename),
+			MIME: contentType,
+			Size: body.n,
+		},
+		Key: key,
 	}
-	att.Width, att.Height = dimensions(r.URL.Query())
+	sa.Width, sa.Height = dimensions(r.URL.Query())
 
-	if err := s.store.CreateAttachment(r.Context(), me.ID, key, att); err != nil {
+	// Ukuran yang diakui client hanya dipakai kalau server tidak punya
+	// salinannya untuk diperiksa sendiri — yaitu saat turunan dimatikan. Di
+	// luar itu, yang dipercaya adalah header berkasnya: angka dari client bisa
+	// salah tanpa niat jahat (browser lama), dan bisa salah dengan niat jahat
+	// (ruang selayar penuh yang dipesan oleh satu gambar 1x1).
+	s.attachThumbnail(r.Context(), &sa, source)
+
+	if err := s.store.CreateAttachment(r.Context(), me.ID, sa); err != nil {
 		// Baris gagal ditulis: buang lagi byte-nya, jangan tinggalkan berkas
-		// yang tidak akan pernah ada yang menyebutnya.
+		// yang tidak akan pernah ada yang menyebutnya. Turunannya ikut, karena
+		// dia pun tidak akan pernah disebut baris mana pun.
 		s.deleteBlobQuietly(key)
+		if sa.ThumbKey != "" {
+			s.deleteBlobQuietly(sa.ThumbKey)
+		}
 		s.m.AttachmentUploads.WithLabelValues("gagal").Inc()
 		s.writeStoreError(w, err, "catat lampiran")
 		return
@@ -132,57 +190,269 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 
 	s.m.AttachmentUploads.WithLabelValues("ok").Inc()
 	s.m.AttachmentBytes.Add(float64(body.n))
-	writeJSON(w, http.StatusCreated, att)
+	writeJSON(w, http.StatusCreated, sa.Attachment)
+}
+
+// attachThumbnail mengisi ukuran sebenarnya dan, bila perlu, membuat turunan.
+//
+// Tidak pernah mengembalikan error, dan itu disengaja. Lampiran yang sudah
+// tersimpan dengan benar tidak boleh gagal hanya karena gambarnya tidak bisa
+// diperkecil — berkasnya tetap ada, tetap bisa diunduh, tetap bisa dikirim.
+// Yang hilang cuma penghematan, dan itu hilang dengan tercatat di metrik.
+func (s *Server) attachThumbnail(ctx context.Context, sa *store.StoredAttachment, source *bytes.Buffer) {
+	if source == nil {
+		return
+	}
+	src := source.Bytes()
+
+	// Giliran dulu, baru bekerja. Membaca header pun sudah mendekode sebagian,
+	// dan yang dijaga di sini adalah memori — bukan lamanya kerja.
+	select {
+	case s.thumbSem <- struct{}{}:
+		defer func() { <-s.thumbSem }()
+	case <-time.After(thumbWait):
+		s.m.Thumbnails.WithLabelValues("sibuk").Inc()
+		return
+	case <-ctx.Done():
+		return
+	}
+
+	// Ukuran dibaca lebih dulu, dan berguna justru pada gambar yang TIDAK
+	// dibuatkan turunan: yang sudah kecil tetap butuh ruang yang dipesan dengan
+	// benar di layar. Gagal di sini berarti berkasnya bukan gambar yang bisa
+	// kita baca sama sekali — termasuk yang pikselnya terlalu banyak untuk
+	// didekode — dan tidak ada gunanya melanjutkan.
+	size, err := imaging.Measure(src, s.cfg.ThumbMaxPixels)
+	if err != nil {
+		s.m.Thumbnails.WithLabelValues("gagal").Inc()
+		s.log.Warn("membaca ukuran gambar gagal", "attachment", sa.ID, "mime", sa.MIME, "err", err)
+		return
+	}
+	sa.Width, sa.Height = &size.Width, &size.Height
+
+	start := time.Now()
+	thumb, err := imaging.Make(src, s.cfg.ThumbMaxDim, s.cfg.ThumbMaxPixels)
+	s.m.ThumbnailSeconds.Observe(time.Since(start).Seconds())
+
+	switch {
+	case errors.Is(err, imaging.ErrTidakPerlu):
+		s.m.Thumbnails.WithLabelValues("dilewati").Inc()
+		return
+	case err != nil:
+		// Gambar yang headernya terbaca tapi isinya rusak. Tetap sah sebagai
+		// lampiran — hanya tidak sebagai gambar yang bisa kita olah.
+		s.m.Thumbnails.WithLabelValues("gagal").Inc()
+		s.log.Warn("membuat turunan gambar gagal", "attachment", sa.ID, "mime", sa.MIME, "err", err)
+		return
+	}
+
+	thumbKey := thumbStorageKey(sa.Key, thumb.MIME)
+	putCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	if err := s.blobs.Put(putCtx, thumbKey, thumb.MIME, bytes.NewReader(thumb.Bytes), int64(len(thumb.Bytes))); err != nil {
+		// Unggahan turunan yang gagal di tengah bisa meninggalkan berkas
+		// separuh, dan tidak akan ada baris yang menunjuk ke sana.
+		s.deleteBlobQuietly(thumbKey)
+		s.m.Thumbnails.WithLabelValues("gagal").Inc()
+		s.log.Warn("menyimpan turunan gambar gagal", "attachment", sa.ID, "err", err)
+		return
+	}
+
+	sa.ThumbKey, sa.ThumbMIME, sa.ThumbSize = thumbKey, thumb.MIME, int64(len(thumb.Bytes))
+	sa.ThumbURL = store.AttachmentThumbURL(sa.ID)
+
+	s.m.Thumbnails.WithLabelValues("ok").Inc()
+	s.m.ThumbnailBytes.Add(float64(len(thumb.Bytes)))
+}
+
+// thumbStorageKey menurunkan kunci turunan dari kunci aslinya, bukan menyusunnya
+// dari awal.
+//
+// Keduanya jadi bertetangga di penyimpanan — "2026/09/<uuid>.jpg" dan
+// "2026/09/<uuid>_t.jpg" — sehingga siapa pun yang membuka filer bisa langsung
+// melihat pasangannya. Id yang sudah ada di dalam kunci aslinya yang menjamin
+// tidak ada dua turunan bertabrakan.
+// thumbFileName menyesuaikan ekstensi nama tampilan dengan isi turunannya.
+//
+// Berkas WebP menghasilkan turunan PNG, dan menamainya "logo.webp" berarti
+// berbohong kepada siapa pun yang menyimpannya: yang tersimpan PNG. Namanya
+// sendiri tidak menentukan apa pun soal penyajian — tipenya selalu datang dari
+// database — tapi nama yang salah tetap nama yang salah.
+func thumbFileName(name, thumbMIME string) string {
+	base := strings.TrimSuffix(name, path.Ext(name))
+	if base == "" {
+		base = "turunan"
+	}
+	return base + commonExtensions[thumbMIME]
+}
+
+func thumbStorageKey(key, thumbMIME string) string {
+	return strings.TrimSuffix(key, path.Ext(key)) + "_t" + commonExtensions[thumbMIME]
 }
 
 func (s *Server) handleDownloadAttachment(w http.ResponseWriter, r *http.Request) {
-	me := userFrom(r.Context())
+	sa, ok := s.attachmentForRequest(w, r)
+	if !ok {
+		return
+	}
+	s.serveBlob(w, r, sa.Key, sa.Attachment, sa.Size)
+}
 
+// handleDownloadThumbnail menyajikan turunan kecil.
+//
+// Izinnya datang dari query yang sama persis dengan berkas aslinya — bukan dari
+// pemeriksaan tersendiri yang kebetulan mirip. Turunan adalah gambar yang sama,
+// hanya lebih kecil; siapa pun yang tidak boleh melihat yang satu tidak boleh
+// melihat yang lain, dan satu-satunya cara memastikan kedua aturan itu tidak
+// pernah menyimpang adalah dengan tidak pernah menulisnya dua kali.
+func (s *Server) handleDownloadThumbnail(w http.ResponseWriter, r *http.Request) {
+	sa, ok := s.attachmentForRequest(w, r)
+	if !ok {
+		return
+	}
+	if sa.ThumbKey == "" {
+		// Tidak pernah ada turunan untuk lampiran ini. Client hanya meminta
+		// alamat ini kalau thumbUrl terisi, jadi sampai ke sini berarti alamatnya
+		// dirangkai sendiri — dan jawaban jujurnya memang "tidak ada".
+		writeError(w, http.StatusNotFound, "lampiran ini tidak punya turunan")
+		return
+	}
+
+	// Nama dan tipe turunan BUKAN nama dan tipe aslinya: yang tersaji di sini
+	// adalah JPEG atau PNG hasil enkode ulang, apa pun masukannya. Menyebut
+	// tipe aslinya berarti mengirim PNG dengan label WebP.
+	shown := sa.Attachment
+	shown.MIME = sa.ThumbMIME
+	shown.Size = sa.ThumbSize
+	shown.Name = thumbFileName(sa.Name, sa.ThumbMIME)
+
+	s.serveBlob(w, r, sa.ThumbKey, shown, sa.ThumbSize)
+}
+
+// attachmentForRequest menyatukan tiga langkah yang harus dilewati kedua jalur
+// baca: lampiran menyala, id-nya masuk akal, dan orang ini berhak membacanya.
+func (s *Server) attachmentForRequest(w http.ResponseWriter, r *http.Request) (store.StoredAttachment, bool) {
 	if s.blobs == nil {
 		writeError(w, http.StatusServiceUnavailable, "lampiran tidak aktif di server ini")
-		return
+		return store.StoredAttachment{}, false
 	}
 
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "id lampiran tidak valid")
-		return
+		return store.StoredAttachment{}, false
 	}
 
-	att, key, err := s.store.AttachmentForRead(r.Context(), id, me.ID)
+	sa, err := s.store.AttachmentForRead(r.Context(), id, userFrom(r.Context()).ID)
 	if err != nil {
 		s.m.AttachmentDownloads.WithLabelValues("ditolak").Inc()
 		s.writeStoreError(w, err, "baca lampiran")
+		return store.StoredAttachment{}, false
+	}
+	return sa, true
+}
+
+// serveBlob mengalirkan satu berkas dari penyimpanan ke browser — seluruhnya,
+// atau sepotong bila diminta.
+//
+// size datang dari DATABASE, bukan dari penyimpanan. Itu yang membuat rentang
+// bisa dinilai — dan ditolak dengan 416 — tanpa satu pun permintaan jaringan
+// ke penyimpanan. Client yang meleset menghitung posisi adalah hal biasa saat
+// video di-seek berulang kali, dan tiap kesalahannya tidak perlu jadi beban
+// bagi penyimpanan yang sedang melayani orang lain.
+func (s *Server) serveBlob(
+	w http.ResponseWriter,
+	r *http.Request,
+	key string,
+	shown store.Attachment,
+	size int64,
+) {
+	rng, partial, err := parseRange(r.Header.Get("Range"), size)
+	if errors.Is(err, errRangeTidakTerpenuhi) {
+		s.m.RangeRequests.WithLabelValues("tidak_terpenuhi").Inc()
+		// Bentuk "*/panjang" adalah cara memberi tahu client ukuran yang
+		// sebenarnya, supaya percobaan berikutnya tidak meleset lagi.
+		w.Header().Set("Content-Range", "bytes */"+strconv.FormatInt(size, 10))
+		writeError(w, http.StatusRequestedRangeNotSatisfiable, "rentang di luar ukuran berkas")
 		return
 	}
 
-	obj, err := s.blobs.Get(r.Context(), key)
+	var want *blob.Range
+	if partial {
+		want = &rng
+	}
+
+	obj, err := s.blobs.Get(r.Context(), key, want)
 	if errors.Is(err, blob.ErrNotFound) {
 		// Baris ada tapi isinya hilang. Ini bukan 404 biasa dari sudut pandang
 		// operator — artinya penyimpanan dan database sudah tidak sepakat.
 		s.m.AttachmentDownloads.WithLabelValues("hilang").Inc()
-		s.log.Error("isi lampiran tidak ada di penyimpanan", "attachment", id, "key", key)
+		s.log.Error("isi lampiran tidak ada di penyimpanan", "attachment", shown.ID, "key", key)
 		writeError(w, http.StatusNotFound, "isi lampiran tidak ditemukan")
 		return
 	}
 	if err != nil {
 		s.m.AttachmentDownloads.WithLabelValues("gagal").Inc()
-		s.log.Error("ambil lampiran", "attachment", id, "err", err)
+		s.log.Error("ambil lampiran", "attachment", shown.ID, "err", err)
 		writeError(w, http.StatusBadGateway, "penyimpanan lampiran tidak bisa dihubungi")
 		return
 	}
 	defer obj.Body.Close() //nolint:errcheck
 
-	setAttachmentHeaders(w, att)
-	if obj.Size >= 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(obj.Size, 10))
+	// Header penyajian dipasang di sini, bukan di awal — SETELAH dipastikan ada
+	// yang benar-benar akan disajikan.
+	//
+	// Salah satunya Cache-Control setahun penuh yang bertanda immutable, dan
+	// itu benar untuk byte lampiran yang memang tidak pernah berubah. Menempel
+	// di jawaban 404 atau 416, dia berubah jadi kesalahan yang menetap: browser
+	// menyimpannya selama setahun dan tidak pernah lagi bertanya, bahkan setelah
+	// penyebabnya diperbaiki di sisi server.
+	setAttachmentHeaders(w, shown)
+
+	status := http.StatusOK
+	length := size
+
+	// obj.Partial, bukan `partial`. Yang menentukan status jawaban adalah apa
+	// yang BENAR-BENAR dikirim penyimpanan, bukan apa yang kita minta darinya:
+	// penyimpanan yang mengabaikan Range menjawab berkas utuh, dan menandainya
+	// 206 berarti pemutar video merakit berkas yang isinya tumpang tindih.
+	if obj.Partial {
+		end := rng.End
+		if obj.Size >= 0 {
+			// Panjang yang dilaporkan penyimpanan yang menentukan ujungnya,
+			// supaya Content-Range dan Content-Length tidak mungkin berselisih.
+			end = rng.Start + obj.Size - 1
+		}
+		total := obj.Total
+		if total < 0 {
+			total = size
+		}
+
+		status = http.StatusPartialContent
+		length = end - rng.Start + 1
+		w.Header().Set("Content-Range", contentRange(rng.Start, end, total))
+		s.m.RangeRequests.WithLabelValues("sepotong").Inc()
+	} else if partial {
+		s.m.RangeRequests.WithLabelValues("utuh").Inc()
+	}
+
+	if length >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
 	}
 
 	s.m.AttachmentDownloads.WithLabelValues("ok").Inc()
+	w.WriteHeader(status)
+
+	// Permintaan HEAD sampai ke sini juga — ServeMux mencocokkannya dengan pola
+	// GET — dan net/http yang membuang body-nya sendiri sambil mempertahankan
+	// Content-Length. Itu yang dipakai pemutar video untuk mengetahui panjang
+	// berkas sebelum meminta potongan pertamanya.
 	if _, err := io.Copy(w, obj.Body); err != nil {
-		// Browser yang menutup tab di tengah unduhan sampai ke sini. Tidak ada
-		// yang bisa — atau perlu — dilakukan; header sudah terkirim.
-		s.log.Debug("unduhan lampiran terputus", "attachment", id, "err", err)
+		// Browser yang menutup tab di tengah unduhan sampai ke sini, dan
+		// begitu juga pemutar video yang membatalkan potongan karena orangnya
+		// melompat ke tempat lain — yang terakhir justru tanda fiturnya bekerja.
+		s.log.Debug("unduhan lampiran terputus", "attachment", shown.ID, "err", err)
 	}
 }
 
@@ -190,12 +460,18 @@ func (s *Server) handleDownloadAttachment(w http.ResponseWriter, r *http.Request
 // tempat, supaya tidak ada jalur yang lupa salah satunya.
 func setAttachmentHeaders(w http.ResponseWriter, att store.Attachment) {
 	disposition := "attachment"
-	if inlineTypes[att.MIME] {
+	if inlineTypes[att.MIME] || playableTypes[att.MIME] {
 		disposition = "inline"
 	}
 
 	w.Header().Set("Content-Type", att.MIME)
 	w.Header().Set("Content-Disposition", disposition+"; "+encodeFilename(att.Name))
+
+	// Tanpa ini, browser tidak akan pernah MENCOBA meminta sepotong: pemutar
+	// video menganggap berkas tidak bisa dilompati dan mengunduhnya dari awal.
+	// Dipasang untuk semua tipe, bukan hanya video — pengunduh yang putus di
+	// tengah memakai jalur yang sama untuk melanjutkan, bukan mengulang.
+	w.Header().Set("Accept-Ranges", "bytes")
 
 	// nosniff mencegah browser menebak tipe sendiri dan mengabaikan yang kita
 	// sebutkan — tebakan itu yang membuat berkas "gambar" berisi HTML pernah

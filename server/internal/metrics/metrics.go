@@ -49,6 +49,19 @@ type Metrics struct {
 	AttachmentDownloads *prometheus.CounterVec
 	AttachmentSwept     prometheus.Counter
 
+	// ---- Turunan gambar (Fase 8) ----
+	// Thumbnails berlabel hasil karena "dilewati" BUKAN kegagalan: gambar yang
+	// sudah kecil memang tidak perlu turunan. Yang layak membangunkan operator
+	// hanyalah "gagal" dan "sibuk" — yang kedua berarti batas dekode bersamaan
+	// terlalu ketat untuk beban yang sedang berjalan.
+	Thumbnails       *prometheus.CounterVec
+	ThumbnailBytes   prometheus.Counter
+	ThumbnailSeconds prometheus.Histogram
+
+	// RangeRequests menghitung permintaan sepotong. Naiknya angka ini adalah
+	// bukti bahwa orang benar-benar melompati video, bukan mengunduhnya utuh.
+	RangeRequests *prometheus.CounterVec
+
 	// ---- Push notification ----
 	PushSent     *prometheus.CounterVec
 	PushSkipped  *prometheus.CounterVec
@@ -168,6 +181,30 @@ func New() *Metrics {
 		Help: "Lampiran yatim yang dibuang: diunggah tapi tidak pernah jadi dikirim.",
 	})
 
+	m.Thumbnails = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace, Subsystem: "attachments", Name: "thumbnails_total",
+		Help: "Pembuatan turunan gambar, per hasil (ok, dilewati, sibuk, gagal).",
+	}, []string{"result"})
+
+	m.ThumbnailBytes = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: namespace, Subsystem: "attachments", Name: "thumbnail_bytes_total",
+		Help: "Total byte turunan yang ditulis ke penyimpanan.",
+	})
+
+	m.ThumbnailSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: namespace, Subsystem: "attachments", Name: "thumbnail_seconds",
+		Help: "Lama mendekode dan memperkecil satu gambar.",
+		// Rentangnya jauh lebih lebar dari histogram lain di berkas ini karena
+		// yang diukur memang bukan I/O melainkan kerja CPU pada gambar yang
+		// ukurannya berbeda seratus kali lipat.
+		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
+	})
+
+	m.RangeRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace, Subsystem: "attachments", Name: "range_requests_total",
+		Help: "Permintaan sepotong berkas, per hasil (sepotong, utuh, tidak_terpenuhi).",
+	}, []string{"result"})
+
 	m.PushSent = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace, Subsystem: "push", Name: "sent_total",
 		Help: "Notifikasi yang dikirim ke layanan push, per hasil.",
@@ -211,6 +248,7 @@ func New() *Metrics {
 		m.EventsPublished, m.BroadcastDuration, m.BroadcastFanout,
 		m.RedisPublishDuration, m.RedisErrors, m.RedisSubscriptions,
 		m.AttachmentUploads, m.AttachmentBytes, m.AttachmentDownloads, m.AttachmentSwept,
+		m.Thumbnails, m.ThumbnailBytes, m.ThumbnailSeconds, m.RangeRequests,
 		m.PushSent, m.PushSkipped, m.PushDropped, m.PushDuration,
 		m.RateLimited, m.Draining, m.BuildInfo,
 		collectors.NewGoCollector(),

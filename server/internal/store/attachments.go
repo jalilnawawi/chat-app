@@ -23,19 +23,42 @@ func attachmentCols(alias string) string {
 	if alias != "" {
 		alias += "."
 	}
-	cols := []string{"id", "name", "mime", "size", "width", "height"}
+	cols := []string{"id", "name", "mime", "size", "width", "height", "thumb_key"}
 	for i, c := range cols {
 		cols[i] = alias + c
 	}
 	return strings.Join(cols, ", ")
 }
 
+// scanAttachment membaca satu baris dan menurunkan alamat-alamatnya.
+//
+// thumb_key ikut terbaca walau isinya tidak pernah dikirim ke client: yang
+// dibutuhkan client cuma TAHU apakah turunannya ada, dan itu yang menentukan
+// ThumbURL diisi atau dibiarkan kosong. Alamat penyimpanannya sendiri berhenti
+// di sini.
 func scanAttachment(row pgx.Row, a *Attachment) error {
-	if err := row.Scan(&a.ID, &a.Name, &a.MIME, &a.Size, &a.Width, &a.Height); err != nil {
+	var thumbKey *string
+	if err := row.Scan(&a.ID, &a.Name, &a.MIME, &a.Size, &a.Width, &a.Height, &thumbKey); err != nil {
 		return err
 	}
 	a.URL = AttachmentURL(a.ID)
+	if thumbKey != nil {
+		a.ThumbURL = AttachmentThumbURL(a.ID)
+	}
 	return nil
+}
+
+// nullable menerjemahkan string kosong jadi NULL.
+//
+// Kolom turunan dijaga CHECK yang menuntut ketiganya terisi atau ketiganya
+// kosong, dan string kosong BUKAN kosong di mata CHECK itu. Tanpa ini, lampiran
+// tanpa turunan akan ditolak database — tepat di jalur yang paling sering
+// dilewati.
+func nullable(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // CreateAttachment mencatat lampiran yang isinya SUDAH tersimpan di blob store.
@@ -44,11 +67,19 @@ func scanAttachment(row pgx.Row, a *Attachment) error {
 // mati di antara keduanya, yang tertinggal adalah file tanpa baris — sampah
 // diam yang tidak dilihat siapa pun. Urutan sebaliknya meninggalkan baris tanpa
 // file, dan itu tampil di layar orang sebagai lampiran yang rusak.
-func (s *Store) CreateAttachment(ctx context.Context, ownerID uuid.UUID, storageKey string, a Attachment) error {
+func (s *Store) CreateAttachment(ctx context.Context, ownerID uuid.UUID, sa StoredAttachment) error {
+	var thumbSize *int64
+	if sa.ThumbKey != "" {
+		thumbSize = &sa.ThumbSize
+	}
+
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO attachments (id, owner_id, storage_key, name, mime, size, width, height)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		a.ID, ownerID, storageKey, a.Name, a.MIME, a.Size, a.Width, a.Height)
+		INSERT INTO attachments
+			(id, owner_id, storage_key, name, mime, size, width, height,
+			 thumb_key, thumb_mime, thumb_size)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		sa.ID, ownerID, sa.Key, sa.Name, sa.MIME, sa.Size, sa.Width, sa.Height,
+		nullable(sa.ThumbKey), nullable(sa.ThumbMIME), thumbSize)
 	if isUniqueViolation(err) {
 		return ErrConflict
 	}
@@ -66,13 +97,16 @@ func (s *Store) CreateAttachment(ctx context.Context, ownerID uuid.UUID, storage
 // dengan aturan percakapan: orang yang ada di dalamnya. Yang belum terpasang ke
 // pesan mana pun hanya bisa dibaca pengunggahnya sendiri, supaya pratinjau
 // sebelum kirim tetap jalan tanpa membuka file itu untuk orang lain.
-func (s *Store) AttachmentForRead(ctx context.Context, id, viewerID uuid.UUID) (Attachment, string, error) {
+func (s *Store) AttachmentForRead(ctx context.Context, id, viewerID uuid.UUID) (StoredAttachment, error) {
 	var (
-		a   Attachment
-		key string
+		sa        StoredAttachment
+		thumbKey  *string
+		thumbMIME *string
+		thumbSize *int64
 	)
 	err := s.pool.QueryRow(ctx, `
-		SELECT a.storage_key, `+attachmentCols("a")+`
+		SELECT a.storage_key, a.thumb_key, a.thumb_mime, a.thumb_size,
+		       a.id, a.name, a.mime, a.size, a.width, a.height
 		FROM attachments a
 		LEFT JOIN messages m ON m.id = a.message_id
 		WHERE a.id = $1
@@ -82,18 +116,28 @@ func (s *Store) AttachmentForRead(ctx context.Context, id, viewerID uuid.UUID) (
 		           SELECT 1 FROM conversation_members cm
 		           WHERE cm.conversation_id = m.conversation_id AND cm.user_id = $2))
 		  )`, id, viewerID,
-	).Scan(&key, &a.ID, &a.Name, &a.MIME, &a.Size, &a.Width, &a.Height)
+	).Scan(&sa.Key, &thumbKey, &thumbMIME, &thumbSize,
+		&sa.ID, &sa.Name, &sa.MIME, &sa.Size, &sa.Width, &sa.Height)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		// 404 juga untuk lampiran yang ADA tapi bukan haknya: membedakan
 		// keduanya berarti memberi tahu orang asing bahwa file itu eksis.
-		return Attachment{}, "", ErrNotFound
+		//
+		// Turunan mengikuti aturan yang sama persis, lewat query yang sama
+		// persis. Jalur baca kedua yang izinnya diperiksa dengan cara sendiri
+		// adalah jalur kedua yang bisa salah sendiri.
+		return StoredAttachment{}, ErrNotFound
 	}
 	if err != nil {
-		return Attachment{}, "", fmt.Errorf("baca lampiran: %w", err)
+		return StoredAttachment{}, fmt.Errorf("baca lampiran: %w", err)
 	}
-	a.URL = AttachmentURL(a.ID)
-	return a, key, nil
+
+	sa.URL = AttachmentURL(sa.ID)
+	if thumbKey != nil {
+		sa.ThumbKey, sa.ThumbMIME, sa.ThumbSize = *thumbKey, *thumbMIME, *thumbSize
+		sa.ThumbURL = AttachmentThumbURL(sa.ID)
+	}
+	return sa, nil
 }
 
 // claimAttachments memasang lampiran ke sebuah pesan, di dalam transaksi
@@ -145,6 +189,11 @@ func claimAttachments(ctx context.Context, tx pgx.Tx, messageID, ownerID uuid.UU
 type Orphan struct {
 	ID         uuid.UUID
 	StorageKey string
+	// ThumbKey kosong bila lampiran ini tidak punya turunan. Ikut dibawa
+	// karena penyapu adalah SATU-SATUNYA yang akan pernah menyentuh berkas ini
+	// lagi — kalau turunannya tidak ikut disebut di sini, dia tinggal di
+	// penyimpanan selamanya tanpa satu baris pun yang mengingatnya.
+	ThumbKey string
 }
 
 // TakeOrphanAttachments mengambil sekaligus menghapus catatan lampiran yatim
@@ -163,7 +212,7 @@ func (s *Store) TakeOrphanAttachments(ctx context.Context, olderThan time.Durati
 			WHERE message_id IS NULL AND created_at < now() - $1::interval
 			ORDER BY created_at LIMIT $2
 		)
-		RETURNING id, storage_key`, olderThan.String(), limit)
+		RETURNING id, storage_key, thumb_key`, olderThan.String(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("ambil lampiran yatim: %w", err)
 	}
@@ -171,9 +220,15 @@ func (s *Store) TakeOrphanAttachments(ctx context.Context, olderThan time.Durati
 
 	out := []Orphan{}
 	for rows.Next() {
-		var o Orphan
-		if err := rows.Scan(&o.ID, &o.StorageKey); err != nil {
+		var (
+			o        Orphan
+			thumbKey *string
+		)
+		if err := rows.Scan(&o.ID, &o.StorageKey, &thumbKey); err != nil {
 			return nil, err
+		}
+		if thumbKey != nil {
+			o.ThumbKey = *thumbKey
 		}
 		out = append(out, o)
 	}

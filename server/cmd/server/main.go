@@ -206,6 +206,12 @@ func buildBlobStore(ctx context.Context, cfg config.Config, log *slog.Logger) (b
 	}
 
 	log.Info("lampiran aktif", "filer", cfg.FilerURL, "prefix", cfg.FilerPrefix)
+	if cfg.Thumbnails() {
+		log.Info("turunan gambar aktif",
+			"sisi_maks", cfg.ThumbMaxDim, "dekode_bersamaan", cfg.ThumbConcurrency)
+	} else {
+		log.Info("turunan gambar mati: THUMBNAIL_MAX_DIM = 0")
+	}
 	return s, nil
 }
 
@@ -276,6 +282,16 @@ func sweepOrphans(
 	}
 
 	for _, o := range orphans {
+		// Turunannya lebih dulu, dan kegagalannya TIDAK menghentikan pembuangan
+		// berkas aslinya. Aslinya yang besar; turunan yang tertinggal beberapa
+		// puluh kilobyte adalah kerugian yang jauh lebih kecil daripada foto
+		// beberapa megabyte yang ikut batal dibuang karenanya.
+		if o.ThumbKey != "" {
+			if err := blobs.Delete(opCtx, o.ThumbKey); err != nil {
+				log.Warn("membuang turunan lampiran yatim gagal", "key", o.ThumbKey, "err", err)
+			}
+		}
+
 		if err := blobs.Delete(opCtx, o.StorageKey); err != nil {
 			// Barisnya sudah terhapus, jadi ini tidak akan dicoba lagi. Yang
 			// tertinggal adalah berkas tanpa penunjuk — tidak terlihat siapa

@@ -9,6 +9,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 )
 
@@ -96,10 +97,13 @@ func (s *Seaweed) Put(ctx context.Context, key, contentType string, r io.Reader,
 	return nil
 }
 
-func (s *Seaweed) Get(ctx context.Context, key string) (Object, error) {
+func (s *Seaweed) Get(ctx context.Context, key string, rng *Range) (Object, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url(key), nil)
 	if err != nil {
 		return Object{}, err
+	}
+	if rng != nil {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", rng.Start, rng.End))
 	}
 
 	res, err := s.client.Do(req)
@@ -110,14 +114,43 @@ func (s *Seaweed) Get(ctx context.Context, key string) (Object, error) {
 		drain(res)
 		return Object{}, ErrNotFound
 	}
+	// 416 di sini berarti penyimpanan dan database tidak sepakat soal ukuran
+	// berkas — rentangnya sudah diperiksa terhadap ukuran yang tercatat sebelum
+	// sampai ke sini. Diteruskan sebagai error biasa supaya muncul di log
+	// operator, bukan disamarkan jadi jawaban kosong ke browser.
 	if res.StatusCode >= 300 {
 		drain(res)
 		return Object{}, fmt.Errorf("filer menolak pembacaan: %s", res.Status)
 	}
 
+	obj := Object{Body: res.Body, Size: res.ContentLength, Total: res.ContentLength}
+
+	// Hanya 206 yang membuktikan rentangnya benar-benar dilayani. Filer yang
+	// mengabaikan header Range menjawab 200 dengan berkas utuh, dan itu jawaban
+	// yang sah — pemanggil tinggal meneruskannya apa adanya.
+	if res.StatusCode == http.StatusPartialContent {
+		obj.Partial = true
+		obj.Total = totalFromContentRange(res.Header.Get("Content-Range"))
+	}
+
 	// Body sengaja TIDAK ditutup di sini — itu tugas pemanggil, yang akan
 	// menyalurkannya langsung ke koneksi browser tanpa singgah di memori.
-	return Object{Body: res.Body, Size: res.ContentLength}, nil
+	return obj, nil
+}
+
+// totalFromContentRange mengambil ukuran penuh dari header berbentuk
+// "bytes 0-1023/98765". Mengembalikan -1 bila bagian setelah garis miring tidak
+// menyebutkan angka — yang sah, dan artinya ukurannya memang belum diketahui.
+func totalFromContentRange(v string) int64 {
+	_, size, ok := strings.Cut(v, "/")
+	if !ok {
+		return -1
+	}
+	total, err := strconv.ParseInt(strings.TrimSpace(size), 10, 64)
+	if err != nil {
+		return -1
+	}
+	return total
 }
 
 func (s *Seaweed) Delete(ctx context.Context, key string) error {

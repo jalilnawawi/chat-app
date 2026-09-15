@@ -43,6 +43,14 @@ type Server struct {
 	blobs blob.Store
 	push  *push.Dispatcher
 
+	// thumbSem membatasi berapa gambar boleh dibentangkan di memori bersamaan.
+	//
+	// Bukan antrean: yang tidak kebagian tempat dalam beberapa detik TIDAK
+	// menunggu, melainkan melanjutkan tanpa turunan. Alasannya sama dengan
+	// antrean push yang membuang saat penuh — turunannya boleh tidak ada,
+	// lampirannya tidak boleh gagal. Nil bila turunan dimatikan.
+	thumbSem chan struct{}
+
 	// draining dibaca tiap kali /readyz dipanggil, dari goroutine mana pun.
 	draining atomic.Bool
 }
@@ -57,16 +65,22 @@ func NewServer(
 	log *slog.Logger,
 	m *metrics.Metrics,
 ) *Server {
+	var thumbSem chan struct{}
+	if cfg.Thumbnails() {
+		thumbSem = make(chan struct{}, cfg.ThumbConcurrency)
+	}
+
 	return &Server{
-		cfg:     cfg,
-		store:   st,
-		hub:     h,
-		limiter: limiter,
-		ws:      ws.NewHandler(st, h, limiter, cfg.TypingRate, log, m, cfg.AllowedOrigins),
-		log:     log,
-		m:       m,
-		blobs:   blobs,
-		push:    pusher,
+		cfg:      cfg,
+		store:    st,
+		hub:      h,
+		limiter:  limiter,
+		ws:       ws.NewHandler(st, h, limiter, cfg.TypingRate, log, m, cfg.AllowedOrigins),
+		log:      log,
+		m:        m,
+		blobs:    blobs,
+		push:     pusher,
+		thumbSem: thumbSem,
 	}
 }
 
@@ -103,6 +117,12 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /api/attachments",
 		s.requireAuth(s.rateLimitByUser("upload", s.cfg.UploadRate, http.HandlerFunc(s.handleUploadAttachment))))
 	mux.Handle("GET /api/attachments/{id}", s.requireAuth(http.HandlerFunc(s.handleDownloadAttachment)))
+
+	// Turunan punya jalurnya sendiri, bukan parameter query pada jalur di atas.
+	// Keduanya adalah byte yang berbeda dan keduanya disimpan selamanya, jadi
+	// keduanya layak punya alamat sendiri yang bisa di-cache sendiri — dan
+	// alamat yang berbeda tidak bisa saling meracuni cache.
+	mux.Handle("GET /api/attachments/{id}/thumb", s.requireAuth(http.HandlerFunc(s.handleDownloadThumbnail)))
 
 	mux.Handle("GET /api/push/config", s.requireAuth(http.HandlerFunc(s.handlePushConfig)))
 	mux.Handle("POST /api/push/subscribe", s.requireAuth(http.HandlerFunc(s.handlePushSubscribe)))
@@ -159,6 +179,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		"status":      "ok",
 		"instance":    s.cfg.InstanceID,
 		"attachments": s.blobs != nil,
+		"thumbnails":  s.thumbSem != nil,
 		"push":        s.push.Enabled(),
 	})
 }

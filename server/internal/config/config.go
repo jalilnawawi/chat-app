@@ -61,6 +61,27 @@ type Config struct {
 	// menumpuk berbulan-bulan.
 	OrphanTTL time.Duration
 
+	// ---- turunan gambar (Fase 8) ----
+	// ThumbMaxDim adalah panjang sisi terpanjang turunan. Nol mematikan
+	// pembuatan turunan sama sekali, dan aplikasi kembali menyajikan berkas
+	// asli untuk semua gambar — pola satu-variabel yang sama dengan REDIS_URL
+	// dan SEAWEED_FILER_URL.
+	ThumbMaxDim int
+
+	// ThumbMaxPixels adalah batas jumlah piksel yang boleh didekode, dan
+	// satuannya PIKSEL, bukan byte. Berkas PNG seratus kilobyte bisa berisi
+	// kanvas 40.000 x 40.000 — sah menurut standar, dan enam gigabyte begitu
+	// dibentangkan di memori. MAX_UPLOAD_BYTES tidak menolongnya sama sekali.
+	ThumbMaxPixels int
+
+	// ThumbConcurrency membatasi berapa gambar boleh didekode BERSAMAAN.
+	//
+	// Satu foto dua belas megapiksel menjadi sekitar lima puluh megabyte piksel
+	// mentah saat dibentangkan, dan angka itu tidak ada hubungannya dengan
+	// ukuran berkasnya. Tanpa batas ini, dua puluh unggahan yang kebetulan
+	// bersamaan adalah satu gigabyte yang tidak pernah direncanakan siapa pun.
+	ThumbConcurrency int
+
 	// ---- push notification (Fase 7) ----
 	// Kunci kosong berarti notifikasi dimatikan. Kunci dibuat sekali lalu
 	// disimpan: menggantinya membatalkan SEMUA langganan yang sudah ada,
@@ -140,6 +161,32 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	// 480 piksel: cukup untuk layar yang rapat pada gelembung pesan selebar
+	// 300 piksel, dan masih sekitar seperseratus ukuran foto aslinya.
+	if c.ThumbMaxDim, err = envInt("THUMBNAIL_MAX_DIM", 480); err != nil {
+		return Config{}, err
+	}
+	if c.ThumbMaxDim != 0 && (c.ThumbMaxDim < 16 || c.ThumbMaxDim > 4096) {
+		return Config{}, fmt.Errorf("THUMBNAIL_MAX_DIM harus 0 (mati) atau antara 16 dan 4096")
+	}
+	// 50 megapiksel kira-kira dua kali kamera ponsel kelas atas — longgar untuk
+	// foto sungguhan, jauh di bawah kanvas yang dibuat untuk meledakkan memori.
+	if c.ThumbMaxPixels, err = envInt("THUMBNAIL_MAX_PIXELS", 50_000_000); err != nil {
+		return Config{}, err
+	}
+	if c.ThumbMaxPixels < 1 {
+		return Config{}, fmt.Errorf("THUMBNAIL_MAX_PIXELS harus positif")
+	}
+	// Bawaannya sengaja kecil dan TIDAK mengikuti jumlah inti mesin: yang
+	// dibatasi di sini memori, bukan CPU, dan mesin berinti banyak justru yang
+	// paling mudah kehabisan memori karena batasnya ikut membesar.
+	if c.ThumbConcurrency, err = envInt("THUMBNAIL_CONCURRENCY", 4); err != nil {
+		return Config{}, err
+	}
+	if c.ThumbConcurrency < 1 {
+		return Config{}, fmt.Errorf("THUMBNAIL_CONCURRENCY harus positif")
+	}
+
 	maxConns, err := envInt("DB_MAX_CONNS", 0)
 	if err != nil {
 		return Config{}, err
@@ -212,6 +259,10 @@ func (c Config) MultiInstance() bool { return c.RedisURL != "" }
 
 // Attachments melaporkan apakah unggahan lampiran menyala.
 func (c Config) Attachments() bool { return c.FilerURL != "" }
+
+// Thumbnails melaporkan apakah turunan gambar dibuat. Ikut mati sendiri bila
+// lampirannya mati — tidak ada gambar untuk diperkecil.
+func (c Config) Thumbnails() bool { return c.Attachments() && c.ThumbMaxDim > 0 }
 
 // Push melaporkan apakah notifikasi menyala.
 func (c Config) Push() bool { return c.VAPIDPublicKey != "" && c.VAPIDPrivateKey != "" }

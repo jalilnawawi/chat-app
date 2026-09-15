@@ -190,9 +190,83 @@ menangkapnya. Yang menangkapnya adalah membuka halamannya.
 
 ---
 
-## Fase 8 — Kandidat berikutnya
-- [ ] Partisi `messages` — baru relevan di puluhan juta baris; rencana lengkap
-      beserta pemicunya sudah ditulis di [docs/scaling.md](docs/scaling.md)
-- [ ] Thumbnail untuk gambar — foto 12 megapiksel dari ponsel sekarang diunduh
-      utuh untuk ditampilkan selebar 300 piksel
-- [ ] Range request untuk lampiran, supaya video panjang bisa dilompati
+## Fase 8 — Turunan gambar & permintaan sepotong
+Keduanya menjawab pertanyaan yang sama dari dua arah: berapa byte yang sebenarnya
+perlu dikirim supaya orang melihat apa yang dia minta. Sebelum fase ini
+jawabannya selalu "semuanya". Keputusan lengkap di
+[docs/thumbnail-dan-range.md](docs/thumbnail-dan-range.md).
+
+### Turunan gambar
+- [x] Dibuat saat UNGGAH, sebelum barisnya tercatat — supaya salinan jsonb Fase 7
+      tidak pernah basi dan tidak butuh jalur sinkronisasi baru
+- [x] Paket `imaging` yang masukannya byte dan keluarannya byte: bisa diuji tanpa
+      database maupun penyimpanan objek
+- [x] Batas decompression bomb dihitung dalam PIKSEL lewat `image.DecodeConfig`,
+      sebelum dekode penuh — `MAX_UPLOAD_BYTES` tidak menolong sama sekali di sini
+- [x] Dekode bersamaan dibatasi semaphore; yang tidak kebagian giliran dalam tiga
+      detik lanjut TANPA turunan, tidak menunggu
+- [x] Format turunan ditentukan ada-tidaknya alpha (`Opaque()`), bukan format
+      aslinya — dan `thumb_mime` disimpan, bukan ditebak dari ekstensi
+- [x] CatmullRom, bukan bilinear: pengecilan 3000→400 piksel dengan penapis
+      bilinear memecah rambut, teks, dan garis halus jadi bintik
+- [x] Orientasi EXIF dibaca dan diterapkan — tanpa ini setiap foto potret dari
+      ponsel menghasilkan turunan yang MIRING sementara aslinya tampil tegak
+- [x] Ukuran gambar tidak lagi dipercayakan ke client; `?w=`/`?h=` jadi cadangan
+      untuk saat turunan dimatikan
+- [x] Turunan ikut disapu bersama lampiran yatim, dan ikut dibuang saat baris
+      lampirannya gagal ditulis
+- [x] Bisa dimatikan penuh lewat `THUMBNAIL_MAX_DIM=0`
+
+### Permintaan sepotong (Range)
+- [x] `blob.Store.Get` menerima rentang; filer SeaweedFS dilayani lewat header
+      HTTP biasa
+- [x] Ukuran datang dari DATABASE, jadi rentang di luar berkas dijawab 416 tanpa
+      menyentuh penyimpanan sama sekali
+- [x] Status jawaban ditentukan oleh apa yang BENAR-BENAR dijawab penyimpanan
+      (`obj.Partial`), bukan oleh apa yang kita minta darinya
+- [x] Bentuk sufiks (`bytes=-500`) — yang dipakai pemutar untuk membaca indeks
+      MP4 di ujung berkas
+- [x] Bentuk yang tidak dikenali diabaikan (kirim utuh); yang di luar ukuran
+      ditolak 416 dengan `Content-Range: bytes */<ukuran>`
+- [x] Video dan rekaman suara disajikan `inline` — daftar izin, bukan larangan;
+      SVG dan HTML tetap dipaksa terunduh
+- [x] `Accept-Ranges: bytes` untuk semua tipe
+- [x] UI: `<video controls preload="metadata">` dan `<audio>`; gambar memakai
+      turunan untuk ditampilkan dan berkas asli saat diklik
+
+### Verifikasi
+- [x] `go vet` + `go test -race ./...` bersih; test baru untuk penguraian Range,
+      penyajian 200/206/416, pembuatan turunan, dan pembacaan orientasi EXIF
+- [x] `tsc --noEmit` + `vite build` bersih
+- [x] Uji HTTP langsung: turunan hanya untuk gambar yang perlu, izin turunan sama
+      persis dengan aslinya (401 tanpa login, 404 untuk orang luar, 200 untuk
+      anggota), "bom" PNG 33 byte berisi kanvas 40.000 x 40.000 ditolak tapi
+      lampirannya tetap utuh, dan CHECK database menolak kolom turunan yang
+      separuh terisi
+- [x] Verifikasi browser (Brave, dua konteks terpisah, puppeteer-core): 15/15
+      lulus — gambar sampai realtime dan benar-benar termuat pada 480 piksel,
+      13 KB alih-alih 6 MB, video memberi durasi dari metadata saja, dan melompat
+      ke detik 170 menghasilkan `bytes 4587520-4871455/4871456`
+
+### Angkanya
+- Foto 4000 x 3000: **6.169.144 B → 13.023 B**, 474 kali lebih kecil, per anggota
+  per kali percakapannya dibuka
+- Video 4.871.456 B: **13.454 byte** benar-benar lewat kabel sebelum orang
+  melompat — diukur dari `encodedDataLength`, bukan dari `Content-Length`
+
+### Dua hal yang ditemukan OLEH menjalankannya
+1. Migrasi `ALTER TABLE ... ADD COLUMN a, b, c` gagal di Postgres: tiap kolom
+   butuh `ADD COLUMN` sendiri. `go vet` tidak melihat isi berkas `.sql`, dan
+   satu-satunya yang menangkapnya adalah menyalakan servernya.
+2. Nama turunan masih memakai ekstensi berkas aslinya — "logo.webp" untuk byte
+   yang sebenarnya PNG. Baru terlihat saat header `Content-Disposition`
+   sungguhan dibaca berdampingan dengan `Content-Type`-nya.
+
+## Fase 9 — Kandidat berikutnya
+- [ ] Partisi `messages` — tetap ditunda, dan pemicunya tetap belum ada; rencana
+      lengkapnya sudah ditulis di [docs/scaling.md](docs/scaling.md)
+- [ ] Pratinjau bingkai pertama untuk video — menuntut dekoder video di dalam
+      proses ini, ketergantungan yang jauh lebih besar daripada seluruh Fase 8
+- [ ] Beberapa ukuran turunan (`srcset`) — satu ukuran sudah menutup selisih
+      seratus kali lipat; yang kedua hanya dua kali, dengan menggandakan jumlah
+      objek di penyimpanan
