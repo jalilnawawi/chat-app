@@ -6,9 +6,14 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/jalilnawawi/chat-app/server/internal/auth"
+	"github.com/jalilnawawi/chat-app/server/internal/ratelimit"
 	"github.com/jalilnawawi/chat-app/server/internal/store"
 )
 
@@ -19,7 +24,15 @@ const (
 
 type ctxKey int
 
-const userKey ctxKey = iota
+const (
+	userKey ctxKey = iota
+	requestIDKey
+)
+
+func requestIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKey).(string)
+	return id
+}
 
 func userFrom(ctx context.Context) store.User {
 	u, _ := ctx.Value(userKey).(store.User)
@@ -121,19 +134,137 @@ func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return hj.Hijack()
 }
 
-func (s *Server) requestLog(next http.Handler) http.Handler {
+// requestID memberi setiap permintaan satu identitas yang ikut ke log dan
+// dipantulkan ke header respons.
+//
+// Dengan beberapa instance di belakang load balancer, "coba lihat lognya"
+// berhenti berarti tanpa ini: keluhan satu user tersebar di beberapa proses.
+// ID yang datang dari proxy dipakai apa adanya supaya satu permintaan punya
+// nomor yang sama sepanjang perjalanannya.
+func (s *Server) requestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.Header.Get("X-Request-ID")
+		if id == "" || len(id) > 128 {
+			id = uuid.NewString()
+		}
+		w.Header().Set("X-Request-ID", id)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey, id)))
+	})
+}
+
+// observe mencatat log terstruktur dan metrik dari satu tempat, supaya
+// keduanya tidak pernah bercerita berbeda tentang permintaan yang sama.
+func (s *Server) observe(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
 
+		elapsed := time.Since(start)
+		route := routeLabel(r.URL.Path)
+
 		s.log.Info("http",
 			"method", r.Method,
 			"path", r.URL.Path,
+			"route", route,
 			"status", sw.status,
-			"dur", time.Since(start).Round(time.Millisecond).String(),
+			"dur", elapsed.Round(time.Millisecond).String(),
+			"request_id", requestIDFrom(r.Context()),
+			"instance", s.cfg.InstanceID,
 		)
+
+		// Koneksi WebSocket berumur menit sampai jam. Memasukkannya ke
+		// histogram durasi permintaan akan menenggelamkan p99 REST yang justru
+		// ingin dipantau, jadi dia hanya dihitung, tidak diukur waktunya —
+		// umur koneksi sudah punya metriknya sendiri di paket ws.
+		s.m.HTTPRequests.WithLabelValues(r.Method, route, strconv.Itoa(sw.status)).Inc()
+		if route != "/ws" {
+			s.m.HTTPDuration.WithLabelValues(r.Method, route).Observe(elapsed.Seconds())
+		}
 	})
+}
+
+// routeLabel mengubah path menjadi label berkardinalitas rendah dengan
+// mengganti tiap segmen UUID jadi "{id}".
+//
+// Tanpa ini, satu label metrik akan lahir untuk setiap percakapan yang pernah
+// dibuka, dan Prometheus akan menyimpan ratusan ribu deret waktu yang tidak
+// pernah ada yang membacanya — cara klasik sebuah sistem monitoring menjatuhkan
+// sistem yang dipantaunya.
+func routeLabel(path string) string {
+	parts := strings.Split(path, "/")
+	for i, p := range parts {
+		if _, err := uuid.Parse(p); err == nil {
+			parts[i] = "{id}"
+		}
+	}
+	return strings.Join(parts, "/")
+}
+
+// clientIP membaca X-Forwarded-For lebih dulu karena di belakang load balancer
+// RemoteAddr selalu berisi alamat proxy — satu nilai untuk semua orang, yang
+// akan membuat kuota per-IP menjadi kuota global.
+//
+// Catatan penting: header ini bisa dipalsukan bila server bisa dijangkau
+// langsung dari internet. Aman dipakai hanya kalau proxy di depan menimpanya,
+// dan itu memang yang dilakukan load balancer pada umumnya.
+func clientIP(r *http.Request) string {
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		if first, _, ok := strings.Cut(fwd, ","); ok {
+			return strings.TrimSpace(first)
+		}
+		return strings.TrimSpace(fwd)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// rateLimitByUser membatasi per identitas user. Harus dipasang DI DALAM
+// requireAuth supaya user sudah ada di context.
+func (s *Server) rateLimitByUser(kind string, rule ratelimit.Rule, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := kind + ":" + userFrom(r.Context()).ID.String()
+		if !s.allow(w, r, kind, key, rule) {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) rateLimitByIP(kind string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := kind + ":ip:" + clientIP(r)
+		if !s.allow(w, r, kind, key, s.cfg.AuthRate) {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// allow menjalankan kuota dan menulis 429 bila habis.
+//
+// Kalau limiter sendiri yang error, permintaan DILOLOSKAN. Rate limit adalah
+// pelindung, bukan bagian dari kebenaran aplikasi; membuat chat berhenti total
+// gara-gara penghitung kuota bermasalah adalah menukar gangguan kecil dengan
+// gangguan besar.
+func (s *Server) allow(w http.ResponseWriter, r *http.Request, kind, key string, rule ratelimit.Rule) bool {
+	res, err := s.limiter.Allow(r.Context(), key, rule)
+	if err != nil {
+		s.log.Error("rate limiter gagal", "kind", kind, "err", err)
+		return true
+	}
+	if res.Allowed {
+		return true
+	}
+
+	s.m.RateLimited.WithLabelValues(kind).Inc()
+	retry := max(int(res.RetryAfter.Round(time.Second).Seconds()), 1)
+	w.Header().Set("Retry-After", strconv.Itoa(retry))
+	writeError(w, http.StatusTooManyRequests, "terlalu banyak permintaan, coba lagi sebentar lagi")
+	return false
 }
 
 // recoverer menjaga satu handler panik tidak menjatuhkan seluruh server —
@@ -142,7 +273,11 @@ func (s *Server) recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				s.log.Error("panic", "path", r.URL.Path, "recover", rec)
+				s.log.Error("panic",
+					"path", r.URL.Path,
+					"request_id", requestIDFrom(r.Context()),
+					"recover", rec,
+				)
 				writeError(w, http.StatusInternalServerError, "terjadi kesalahan di server")
 			}
 		}()

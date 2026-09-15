@@ -15,6 +15,12 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /**
+     * Diisi dari header Retry-After saat server menolak karena kuota (429).
+     * Server tahu persis kapan token berikutnya tersedia; menebak sendiri
+     * berarti mencoba terlalu cepat dan ditolak lagi.
+     */
+    public retryAfterMs = 0,
   ) {
     super(message);
   }
@@ -31,7 +37,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new ApiError(res.status, body.error ?? 'Terjadi kesalahan');
+    const retryAfter = Number(res.headers.get('Retry-After')) * 1000;
+    throw new ApiError(
+      res.status,
+      body.error ?? 'Terjadi kesalahan',
+      Number.isFinite(retryAfter) ? retryAfter : 0,
+    );
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;

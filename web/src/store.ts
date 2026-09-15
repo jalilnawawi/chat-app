@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { api } from './api';
+import { ApiError, api } from './api';
 import { uuidv7 } from './uuid';
 import type { Conversation, Member, Message, PendingMessage, User } from './types';
 
@@ -263,7 +263,21 @@ async function deliver(
   try {
     const saved = await api.sendMessage(conversationId, id, body);
     get().applyMessage(saved);
-  } catch {
+  } catch (err) {
+    // Kena kuota: tunggu selama yang diminta server, lalu coba sekali lagi
+    // diam-diam. Aman justru karena `id` dibuat di client — pengiriman ulang
+    // menghasilkan pesan yang sama, bukan pesan kedua. Menampilkan "gagal" di
+    // sini akan menyuruh orang menekan tombol kirim lagi, dan tekanan tepat
+    // saat server sedang minta pelan-pelan adalah kebalikan dari yang berguna.
+    if (err instanceof ApiError && err.status === 429) {
+      await new Promise(r => setTimeout(r, Math.min(err.retryAfterMs || 1000, 10_000)));
+      try {
+        get().applyMessage(await api.sendMessage(conversationId, id, body));
+        return;
+      } catch {
+        // Jatuh ke penandaan gagal di bawah.
+      }
+    }
     set(s => ({
       pending: {
         ...s.pending,

@@ -57,5 +57,17 @@ export type ServerEvent =
   | { type: 'typing'; payload: { conversationId: string; userId: string; displayName: string; typing: boolean } }
   | { type: 'presence'; payload: { userId: string; online: boolean } }
   | { type: 'presence.snapshot'; payload: { online: string[] } }
+  /**
+   * Pesan susulan setelah reconnect, dikirim berkelompok dalam satu frame.
+   * Satu frame per pesan akan meluberkan antrean kirim koneksi saat banyak
+   * orang menyusul bersamaan — lihat catatan di server/internal/ws/handler.go.
+   */
+  | { type: 'sync.batch'; payload: { conversationId: string; messages: Message[] } }
   | { type: 'sync.complete'; payload: Record<string, never> }
+  /**
+   * Server pamit terencana (rolling deploy). Bedanya dengan koneksi yang putus
+   * begitu saja: instance pengganti SUDAH siap, jadi client boleh menyambung
+   * lagi hampir seketika alih-alih mundur bertahap seperti menghadapi gangguan.
+   */
+  | { type: 'server.shutdown'; payload: { reason: string } }
   | { type: 'error'; payload: { message: string } };

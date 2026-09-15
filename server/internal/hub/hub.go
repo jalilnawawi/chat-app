@@ -1,31 +1,45 @@
 // Package hub menyiarkan event realtime ke koneksi WebSocket yang aktif.
 //
-// Semua siaran melewati SATU pintu: interface Broadcaster. Implementasi saat ini
-// menyimpan koneksi di memori proses — cukup untuk satu instance. Saat nanti
-// butuh lebih dari satu instance, yang ditulis hanyalah implementasi kedua
-// (Redis pub/sub) yang memenuhi interface yang sama; handler HTTP dan WebSocket
-// tidak perlu berubah sama sekali.
+// Semua siaran melewati SATU pintu: interface Broadcaster. Ada dua implementasi
+// yang memenuhinya:
+//
+//   - Memory — koneksi disimpan di memori proses. Cukup untuk satu instance,
+//     dan tetap jadi jalur default saat REDIS_URL kosong supaya `go run` lokal
+//     tidak menuntut infrastruktur tambahan.
+//   - Redis — siaran lewat pub/sub dan presence lewat key ber-TTL, sehingga
+//     beberapa instance bisa melayani user yang sama.
+//
+// Handler HTTP dan WebSocket tidak tahu mana yang sedang dipakai. Itu bukan
+// kebetulan: pilihan transport adalah keputusan deployment, bukan keputusan
+// yang boleh bocor ke logika percakapan.
 package hub
 
 import (
-	"encoding/json"
-	"log/slog"
-	"sync"
+	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 // Tipe event yang dikirim server ke client.
 const (
-	EventMessageNew       = "message.new"
-	EventMessageUpdated   = "message.updated"
-	EventConversationNew  = "conversation.new"
-	EventReadUpdated      = "read.updated"
-	EventTyping           = "typing"
-	EventPresence         = "presence"
-	EventSyncComplete     = "sync.complete"
+	EventMessageNew      = "message.new"
+	EventMessageUpdated  = "message.updated"
+	EventConversationNew = "conversation.new"
+	EventReadUpdated     = "read.updated"
+	EventTyping          = "typing"
+	EventPresence        = "presence"
+	EventSyncComplete    = "sync.complete"
+	// EventSyncBatch membawa banyak pesan susulan dalam satu frame. Lihat
+	// alasannya di ws.Handler.handleSync.
+	EventSyncBatch        = "sync.batch"
 	EventPresenceSnapshot = "presence.snapshot"
 	EventError            = "error"
+
+	// EventServerShutdown dikirim tepat sebelum instance menutup koneksi saat
+	// rolling deploy. Client memakainya untuk membedakan "server pamit, sambung
+	// lagi sekarang dengan jitter" dari "jaringan putus, mundur perlahan".
+	EventServerShutdown = "server.shutdown"
 )
 
 type Event struct {
@@ -35,105 +49,63 @@ type Event struct {
 
 // Broadcaster adalah satu-satunya jalan keluar event ke client.
 type Broadcaster interface {
+	// Register mencatat koneksi. firstConnection true bila setelah pendaftaran
+	// ini user berubah dari offline menjadi online SECARA GLOBAL — bukan cuma
+	// di instance ini. Itu sinyal untuk menyiarkan presence.
+	Register(ctx context.Context, c Sink) (firstConnection bool, err error)
+
+	// Unregister melepas koneksi. lastConnection true bila user tidak lagi
+	// punya koneksi di instance mana pun.
+	Unregister(ctx context.Context, c Sink) (lastConnection bool, err error)
+
 	// Publish mengirim event ke semua koneksi milik user pada daftar target.
+	// Sengaja tanpa error: siaran bersifat best-effort dan pemanggilnya adalah
+	// handler yang sudah menyelesaikan pekerjaan utamanya (pesan sudah tersimpan
+	// di database). Kegagalan dicatat ke log dan metrik, tidak dilempar ke user,
+	// karena client akan menyusul lewat resume saat reconnect.
 	Publish(targets []uuid.UUID, ev Event)
+
 	// OnlineAmong menyaring daftar user, mengembalikan yang sedang terhubung.
-	OnlineAmong(ids []uuid.UUID) []uuid.UUID
+	OnlineAmong(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error)
+
+	// LocalConnections adalah jumlah koneksi di instance ini — dipakai probe
+	// kesiapan dan metrik.
+	LocalConnections() int
+
+	// Drain menutup semua koneksi lokal secara bertahap selama period.
+	// Lihat catatan penyebaran beban di registry.drain.
+	Drain(ctx context.Context, period time.Duration)
+
+	Close() error
 }
+
+// Delivery membedakan DUA sebab sebuah event tidak jadi terkirim.
+//
+// Keduanya pernah dilaporkan sebagai satu nilai false yang sama, dan itu
+// membuat metrik backpressure ikut menghitung setiap koneksi yang menutup
+// normal — satu uji beban dengan seribu koneksi menghasilkan puluhan
+// "client lambat" palsu. Alarm yang berbunyi saat tidak ada apa-apa adalah
+// alarm yang akhirnya dimatikan orang, jadi kedua keadaan ini dipisahkan.
+type Delivery int
+
+const (
+	// Delivered: payload masuk antrean kirim koneksi.
+	Delivered Delivery = iota
+	// Backpressure: buffer penuh, client benar-benar tidak menyusul.
+	Backpressure
+	// Gone: koneksi sudah ditutup. Bukan masalah, cuma balapan biasa antara
+	// siaran yang sedang berjalan dan orang yang menutup tab.
+	Gone
+)
 
 // Sink adalah sisi hub yang dilihat sebuah koneksi: tempat menaruh byte keluar.
 type Sink interface {
 	UserID() uuid.UUID
-	// Enqueue mengembalikan false bila buffer penuh — pemanggil harus menutup
-	// koneksi. Lihat catatan backpressure di Publish.
-	Enqueue(payload []byte) bool
-}
 
-type Hub struct {
-	mu      sync.RWMutex
-	clients map[uuid.UUID]map[Sink]struct{} // satu user bisa punya banyak tab
-	log     *slog.Logger
-}
+	// Enqueue menaruh payload di antrean kirim tanpa pernah memblokir.
+	// Lihat catatan backpressure di registry.deliver.
+	Enqueue(payload []byte) Delivery
 
-func New(log *slog.Logger) *Hub {
-	return &Hub{clients: make(map[uuid.UUID]map[Sink]struct{}), log: log}
-}
-
-// Register menambahkan koneksi. Mengembalikan true bila ini koneksi PERTAMA
-// milik user tersebut, yaitu saat presence berubah menjadi online.
-func (h *Hub) Register(c Sink) (firstConnection bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	conns, ok := h.clients[c.UserID()]
-	if !ok {
-		conns = make(map[Sink]struct{})
-		h.clients[c.UserID()] = conns
-	}
-	conns[c] = struct{}{}
-	return len(conns) == 1
-}
-
-// Unregister melepas koneksi. Mengembalikan true bila itu koneksi TERAKHIR
-// milik user, yaitu saat presence berubah menjadi offline.
-func (h *Hub) Unregister(c Sink) (lastConnection bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	conns, ok := h.clients[c.UserID()]
-	if !ok {
-		return false
-	}
-	delete(conns, c)
-	if len(conns) == 0 {
-		delete(h.clients, c.UserID())
-		return true
-	}
-	return false
-}
-
-// Publish menyiarkan satu event ke semua koneksi milik target.
-//
-// JSON di-encode SEKALI lalu byte yang sama dibagikan ke semua penerima —
-// di ruang grup, ini beda antara satu encode dan puluhan.
-//
-// Backpressure: bila buffer sebuah koneksi penuh, koneksi itu ditandai untuk
-// ditutup, bukan ditunggu. Menunggu client lambat akan menahan seluruh siaran
-// dan menular ke semua orang di ruang yang sama. Client yang terputus akan
-// reconnect dan menyusul lewat mekanisme resume.
-func (h *Hub) Publish(targets []uuid.UUID, ev Event) {
-	payload, err := json.Marshal(ev)
-	if err != nil {
-		h.log.Error("encode event", "type", ev.Type, "err", err)
-		return
-	}
-
-	h.mu.RLock()
-	var slow []Sink
-	for _, id := range targets {
-		for c := range h.clients[id] {
-			if !c.Enqueue(payload) {
-				slow = append(slow, c)
-			}
-		}
-	}
-	h.mu.RUnlock()
-
-	for _, c := range slow {
-		h.log.Warn("client lambat, koneksi ditutup", "user", c.UserID(), "event", ev.Type)
-		h.Unregister(c)
-	}
-}
-
-func (h *Hub) OnlineAmong(ids []uuid.UUID) []uuid.UUID {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	online := make([]uuid.UUID, 0, len(ids))
-	for _, id := range ids {
-		if len(h.clients[id]) > 0 {
-			online = append(online, id)
-		}
-	}
-	return online
+	// Close meminta koneksi ditutup. Aman dipanggil berkali-kali.
+	Close()
 }

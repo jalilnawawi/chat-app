@@ -587,3 +587,17 @@ func (s *Store) ContactIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, 
 	}
 	return ids, rows.Err()
 }
+
+// Ping dipakai probe kesiapan. Sengaja lewat store, bukan pool langsung, supaya
+// paket api tidak perlu tahu apa pun tentang pgx.
+func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
+
+// DeleteExpiredSessions membuang sesi yang sudah lewat masa berlakunya dan
+// mengembalikan jumlah baris yang terhapus.
+func (s *Store) DeleteExpiredSessions(ctx context.Context) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at < now()`)
+	if err != nil {
+		return 0, fmt.Errorf("hapus sesi kedaluwarsa: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}

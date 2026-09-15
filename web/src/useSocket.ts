@@ -7,6 +7,20 @@ import type { ServerEvent } from './types';
 const BACKOFF_MS = [500, 1000, 2000, 4000, 8000, 15000];
 
 /**
+ * Jendela reconnect saat server pamit terencana.
+ *
+ * Sengaja pendek — instance pengganti sudah siap, tidak ada gunanya menunggu —
+ * tapi tetap diacak. Server sudah menyebar penutupan koneksinya; kalau client
+ * membalas dengan jeda yang seragam, sebaran itu dirapikan kembali jadi barisan
+ * dan instance baru tetap menerima lonjakan yang sama.
+ */
+const RESTART_RECONNECT_MS = [200, 1200];
+
+/** Jeda acak dalam satu rentang, dibulatkan ke milidetik. */
+const between = ([lo, hi]: readonly [number, number] | number[]) =>
+  lo! + Math.random() * (hi! - lo!);
+
+/**
  * Koneksi WebSocket tunggal untuk seluruh aplikasi.
  *
  * Tiga hal yang membuatnya terasa "tidak pernah putus":
@@ -21,6 +35,7 @@ export function useSocket(enabled: boolean) {
   const attemptRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closedByUs = useRef(false);
+  const plannedRestart = useRef(false);
 
   const send = useCallback((type: string, payload: unknown) => {
     const ws = socketRef.current;
@@ -41,6 +56,7 @@ export function useSocket(enabled: boolean) {
 
       ws.onopen = () => {
         attemptRef.current = 0;
+        plannedRestart.current = false;
         store().setConnected(true);
         // Susulkan apa pun yang terlewat selama koneksi putus.
         ws.send(JSON.stringify({ type: 'sync', payload: { cursors: store().syncCursors() } }));
@@ -56,6 +72,15 @@ export function useSocket(enabled: boolean) {
             s.applyMessage(ev.payload);
             if (ev.type === 'message.new' && ev.payload.conversationId === s.activeId) {
               // Kalau ruangnya sedang dibuka, langsung tandai terbaca.
+              s.markReadUpTo(ev.payload.conversationId);
+            }
+            break;
+          case 'sync.batch':
+            // Susulan setelah reconnect. Diterapkan satu per satu seperti pesan
+            // biasa; yang berbeda cuma cara datangnya — sekaligus, bukan satu
+            // frame per pesan.
+            for (const m of ev.payload.messages) s.applyMessage(m);
+            if (ev.payload.conversationId === s.activeId) {
               s.markReadUpTo(ev.payload.conversationId);
             }
             break;
@@ -79,6 +104,12 @@ export function useSocket(enabled: boolean) {
           case 'presence.snapshot':
             s.setOnline(ev.payload.online);
             break;
+          case 'server.shutdown':
+            // Penutupannya menyusul sebentar lagi; yang dicatat di sini cuma
+            // SEBABNYA, supaya onclose tahu ini pamit terencana, bukan jaringan
+            // yang bermasalah.
+            plannedRestart.current = true;
+            break;
           case 'sync.complete':
           case 'error':
             break;
@@ -90,8 +121,21 @@ export function useSocket(enabled: boolean) {
         socketRef.current = null;
         if (closedByUs.current) return;
 
-        const delay = BACKOFF_MS[Math.min(attemptRef.current, BACKOFF_MS.length - 1)]!;
-        attemptRef.current += 1;
+        let delay: number;
+        if (plannedRestart.current) {
+          // Deploy terencana tidak menghabiskan jatah backoff: kalau instance
+          // pengganti ternyata belum siap, percobaan berikutnya baru mundur
+          // bertahap seperti biasa.
+          plannedRestart.current = false;
+          delay = between(RESTART_RECONNECT_MS);
+        } else {
+          const base = BACKOFF_MS[Math.min(attemptRef.current, BACKOFF_MS.length - 1)]!;
+          attemptRef.current += 1;
+          // Jeda diacak ±25%. Saat server pulih dari gangguan, semua client
+          // yang putus bersamaan akan mencoba lagi bersamaan juga — dan
+          // menjatuhkannya lagi tepat saat baru bangun.
+          delay = base * (0.75 + Math.random() * 0.5);
+        }
         timerRef.current = setTimeout(connect, delay);
       };
 

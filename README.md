@@ -4,14 +4,15 @@ Aplikasi chat realtime. Go + PostgreSQL di backend, Bun + React di frontend.
 Mendukung DM 1-on-1 dan grup, presence, typing indicator, read receipt, serta
 edit & hapus pesan.
 
-Status: **MVP jalan end-to-end.** Rencana menuju 800+ user ada di [TASKLIST.md](TASKLIST.md) Fase 6.
+Status: **MVP jalan end-to-end, dan sudah diuji untuk 1000 koneksi bersamaan.**
+Catatan operasional multi-instance ada di [docs/scaling.md](docs/scaling.md).
 
 ## Menjalankan
 
 Butuh Go 1.26+, Bun, dan Docker.
 
 ```bash
-# 1. Database
+# 1. Database (+ Redis, cuma dipakai kalau menjalankan lebih dari satu instance)
 docker compose up -d
 
 # 2. Backend (migrasi jalan otomatis saat start)
@@ -20,6 +21,10 @@ cd server && go run ./cmd/server        # http://localhost:8090
 # 3. Frontend
 cd web && bun install && bun run dev    # http://localhost:5174
 ```
+
+Tanpa `REDIS_URL`, aplikasi jalan sebagai satu instance dengan hub dan rate limit
+di memori proses — itu mode yang paling enak untuk pengembangan. Untuk
+menjalankan beberapa instance sekaligus, lihat [docs/scaling.md](docs/scaling.md).
 
 Buka dua jendela browser berbeda (satu normal, satu incognito), daftar dua akun,
 lalu mulai percakapan.
@@ -36,12 +41,15 @@ project lain yang biasanya sudah memakai port itu. Ubah lewat `.env`
 
 ```
 server/
-  cmd/server/          entry point, graceful shutdown
+  cmd/server/          entry point, shutdown bertahap untuk rolling deploy
+  cmd/loadtest/        alat uji beban: 1000 koneksi + ukur latensi fan-out
   internal/config/     konfigurasi dari env
   internal/migrations/ skema SQL + migrator embedded (tanpa tool eksternal)
   internal/store/      akses database (pgx, SQL manual)
   internal/auth/       argon2id + token sesi
-  internal/hub/        fan-out event realtime  <- titik tukar ke Redis nanti
+  internal/hub/        fan-out event realtime — memori proses atau Redis pub/sub
+  internal/ratelimit/  token bucket per user, lokal atau dibagi lewat Redis
+  internal/metrics/    seluruh instrumen Prometheus di satu tempat
   internal/ws/         satu koneksi WebSocket: heartbeat, backpressure, resume
   internal/api/        routing HTTP, middleware, handler
 web/
@@ -49,6 +57,7 @@ web/
   src/useSocket.ts     koneksi WS: reconnect + resume
   src/store.ts         state global (zustand), termasuk kiriman optimistik
   src/components/      UI
+docs/scaling.md        catatan operasional multi-instance
 ```
 
 ## Keputusan desain
@@ -103,9 +112,25 @@ Selain itu:
   origin, alamat apa pun yang diketik di address bar tetap jalan.
 - **Vite mengikat `::` (dual-stack).** Default-nya hanya IPv6 loopback, dan
   browser yang memilih IPv4 lebih dulu gagal tersambung ke `127.0.0.1:5174`.
-- **Semua siaran lewat satu interface `hub.Broadcaster`.** Saat butuh lebih dari
-  satu instance, yang ditulis hanya implementasi kedua berbasis Redis pub/sub —
-  handler tidak berubah.
+- **Semua siaran lewat satu interface `hub.Broadcaster`.** Menambah instance
+  hanya mengganti implementasinya dengan yang berbasis Redis pub/sub; handler
+  HTTP dan WebSocket tidak berubah sebaris pun. Pilihan transport adalah
+  keputusan deployment, bukan sesuatu yang boleh bocor ke logika percakapan.
+- **`Enqueue` membedakan "buffer penuh" dari "koneksi sudah tutup".** Keduanya
+  pernah dilaporkan sebagai satu nilai `false`, dan itu membuat metrik
+  backpressure ikut menghitung setiap orang yang menutup tab. Alarm yang
+  berbunyi saat tidak ada apa-apa adalah alarm yang akhirnya dimatikan orang.
+- **Menutup koneksi ikut membatalkan konteksnya.** Menutup channel sinyal saja
+  tidak membangunkan `conn.Read` yang sedang memblokir, dan client yang diam
+  akan menggantung sampai prosesnya dimatikan paksa — yang membuat pengurasan
+  saat rolling deploy tidak pernah selesai.
+- **Menyusul setelah reconnect punya jalur kirimnya sendiri.** Susulan dikirim
+  berkelompok (50 pesan per frame) lewat jalur yang MENUNGGU ruang antrean,
+  bukan membuang. Aturan "putus client lambat" ada untuk melindungi siaran dari
+  satu orang yang lambat; menyusul adalah urusan koneksi itu sendiri. Tanpa
+  pemisahan ini, client yang tertinggal jauh diputus justru saat sedang menyusul
+  — dan itu terjadi persis setelah rolling deploy, saat semua orang menyusul
+  bersamaan.
 
 ## Protokol WebSocket
 
@@ -128,12 +153,29 @@ Server -> client:
 | `typing` | `{ conversationId, userId, displayName, typing }` |
 | `presence` | `{ userId, online }` |
 | `presence.snapshot` | `{ online: string[] }` |
+| `sync.batch` | `{ conversationId, messages: Message[] }` — susulan setelah reconnect, berkelompok |
 | `sync.complete` | `{}` |
+| `server.shutdown` | `{ reason }` — instance pamit terencana; sambung lagi sekarang, jangan mundur bertahap |
 | `error` | `{ message }` |
+
+## Kuota
+
+Setiap user punya token bucket sendiri untuk kirim pesan, buka koneksi, dan
+event typing; login/register dibatasi per alamat IP karena argon2id sengaja
+mahal. Semua batas diatur lewat env (lihat `.env.example`).
+
+Server yang menolak membalas **429** dengan header `Retry-After`. Client menunggu
+selama itu lalu mencoba sekali lagi diam-diam — aman justru karena id pesan
+dibuat client, sehingga pengiriman ulang menghasilkan pesan yang sama, bukan
+pesan kedua.
 
 ## Tes
 
 ```bash
 cd server && go test -race ./...
 cd web && bun run typecheck
+
+# Uji beban (kuota auth dilonggarkan karena menyiapkan ribuan sesi dari satu IP)
+RATE_AUTH_PER_MIN=100000 RATE_AUTH_BURST=2000 go run ./cmd/server
+go run ./cmd/loadtest -users 1000 -rate 50 -duration 60s
 ```

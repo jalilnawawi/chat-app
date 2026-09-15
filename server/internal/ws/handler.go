@@ -7,11 +7,15 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
 
 	"github.com/jalilnawawi/chat-app/server/internal/hub"
+	"github.com/jalilnawawi/chat-app/server/internal/metrics"
+	"github.com/jalilnawawi/chat-app/server/internal/ratelimit"
 	"github.com/jalilnawawi/chat-app/server/internal/store"
 )
 
@@ -20,14 +24,45 @@ import (
 // ribuan pesan lewat WebSocket saat reconnect justru bikin macet.
 const maxResume = 200
 
+// resumeTimeout membatasi seluruh proses menyusul untuk satu koneksi. Menunggu
+// itu boleh; menunggu selamanya tidak — satu client yang berhenti membaca tanpa
+// menutup koneksi akan menahan goroutine-nya sampai proses mati.
+const resumeTimeout = 30 * time.Second
+
+// resumeBatch adalah jumlah pesan susulan per frame WebSocket.
+//
+// Angka ini yang menyelamatkan reconnect massal. Antrean kirim tiap koneksi
+// dalamnya 64 frame, dan itu ukuran untuk MEREDAM LEDAKAN SIARAN — bukan untuk
+// menampung riwayat. Mengirim 200 pesan susulan satu per satu memenuhi antrean
+// itu sampai luber, dan siaran pertama yang kebetulan datang saat itu membuat
+// koneksinya diputus karena dikira lambat. Client menyambung lagi, menyusul
+// lagi, diputus lagi.
+//
+// Yang membuatnya berbahaya: kejadiannya justru saat SEMUA orang menyusul
+// bersamaan — setelah rolling deploy atau setelah jaringan pulih.
+//
+// Dengan 50 pesan per frame, riwayat sepenuh apa pun muat dalam beberapa frame.
+const resumeBatch = 50
+
 type Handler struct {
 	store       *store.Store
-	hub         *hub.Hub
+	hub         hub.Broadcaster
+	limiter     ratelimit.Limiter
+	typingRate  ratelimit.Rule
 	log         *slog.Logger
+	m           *metrics.Metrics
 	originHosts []string
 }
 
-func NewHandler(st *store.Store, h *hub.Hub, log *slog.Logger, allowedOrigins []string) *Handler {
+func NewHandler(
+	st *store.Store,
+	h hub.Broadcaster,
+	limiter ratelimit.Limiter,
+	typingRate ratelimit.Rule,
+	log *slog.Logger,
+	m *metrics.Metrics,
+	allowedOrigins []string,
+) *Handler {
 	// websocket.Accept membandingkan HOST, bukan origin lengkap, jadi skema
 	// dibuang di sini.
 	hosts := []string{}
@@ -36,7 +71,15 @@ func NewHandler(st *store.Store, h *hub.Hub, log *slog.Logger, allowedOrigins []
 			hosts = append(hosts, u.Host)
 		}
 	}
-	return &Handler{store: st, hub: h, log: log, originHosts: hosts}
+	return &Handler{
+		store:       st,
+		hub:         h,
+		limiter:     limiter,
+		typingRate:  typingRate,
+		log:         log,
+		m:           m,
+		originHosts: hosts,
+	}
 }
 
 // clientMessage adalah amplop untuk pesan dari client.
@@ -62,13 +105,38 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, user store.User)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	c := newClient(user.ID, conn)
-	defer c.close()
+	c := newClient(user.ID, conn, cancel, h.m)
+	defer c.Close()
 
-	first := h.hub.Register(c)
+	first, err := h.hub.Register(ctx, c)
+	if err != nil {
+		// Pendaftaran gagal berarti koneksi ini tidak akan menerima siaran.
+		// Menutupnya sekarang membuat client langsung mencoba lagi, alih-alih
+		// duduk di ruang chat yang diam-diam mati.
+		h.log.Error("registrasi koneksi gagal", "user", user.ID, "err", err)
+		h.m.WSClosed.WithLabelValues("register_error").Inc()
+		conn.Close(websocket.StatusInternalError, "gagal mendaftar")
+		return
+	}
+
+	h.m.WSAccepted.Inc()
+	h.m.WSActive.Inc()
+
 	defer func() {
-		if last := h.hub.Unregister(c); last {
-			h.broadcastPresence(context.WithoutCancel(ctx), user.ID, false)
+		h.m.WSActive.Dec()
+
+		// Konteks permintaan sudah mati begitu koneksi putus, sedangkan
+		// pelepasan presence justru harus tetap jalan — karena itu konteks
+		// terpisah dengan batas waktunya sendiri.
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancelCleanup()
+
+		last, err := h.hub.Unregister(cleanupCtx, c)
+		if err != nil {
+			h.log.Error("pelepasan koneksi gagal", "user", user.ID, "err", err)
+		}
+		if last {
+			h.broadcastPresence(cleanupCtx, user.ID, false)
 		}
 		conn.Close(websocket.StatusNormalClosure, "")
 	}()
@@ -81,6 +149,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, user store.User)
 
 	h.sendPresenceSnapshot(ctx, c, user.ID)
 	h.readLoop(ctx, c, user)
+	h.m.WSClosed.WithLabelValues("client").Inc()
 }
 
 func (h *Handler) readLoop(ctx context.Context, c *Client, user store.User) {
@@ -97,7 +166,7 @@ func (h *Handler) readLoop(ctx context.Context, c *Client, user store.User) {
 			if status == -1 && !errors.Is(err, context.Canceled) {
 				h.log.Debug("ws read berhenti", "user", user.ID, "err", err)
 			}
-			c.close()
+			c.Close()
 			return
 		}
 
@@ -135,23 +204,40 @@ func (h *Handler) handleSync(ctx context.Context, c *Client, user store.User, ra
 		return
 	}
 
+	syncCtx, cancel := context.WithTimeout(ctx, resumeTimeout)
+	defer cancel()
+
 	for idStr, seq := range payload.Cursors {
 		convID, err := uuid.Parse(idStr)
 		if err != nil {
 			continue
 		}
-		ok, err := h.store.IsMember(ctx, convID, user.ID)
+		ok, err := h.store.IsMember(syncCtx, convID, user.ID)
 		if err != nil || !ok {
 			continue
 		}
 
-		missed, err := h.store.MessagesSince(ctx, convID, seq, maxResume)
+		missed, err := h.store.MessagesSince(syncCtx, convID, seq, maxResume)
 		if err != nil {
 			h.log.Error("resume gagal", "conversation", convID, "err", err)
 			continue
 		}
-		for _, m := range missed {
-			h.sendTo(c, hub.Event{Type: hub.EventMessageNew, Payload: m})
+
+		for chunk := range slices.Chunk(missed, resumeBatch) {
+			// Menunggu, bukan membuang. Lihat catatan di Client.EnqueueWait:
+			// menyusul adalah urusan koneksi ini sendiri, jadi tekanan baliknya
+			// ditanggung sendiri juga.
+			ev := hub.Event{Type: hub.EventSyncBatch, Payload: map[string]any{
+				"conversationId": convID,
+				"messages":       chunk,
+			}}
+			if !h.sendWaiting(syncCtx, c, ev) {
+				h.m.WSResumeFail.Inc()
+				h.log.Warn("resume terputus di tengah jalan",
+					"user", user.ID, "conversation", convID, "tersisa", len(chunk))
+				return
+			}
+			h.m.WSResumeSent.Add(float64(len(chunk)))
 		}
 	}
 
@@ -164,6 +250,16 @@ func (h *Handler) handleTyping(ctx context.Context, user store.User, raw json.Ra
 		Typing         bool      `json:"typing"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
+		return
+	}
+
+	// Typing dibatasi SEBELUM menyentuh database. Tiap event memicu dua query
+	// (cek keanggotaan + daftar anggota), dan event ini yang paling gampang
+	// dikirim beruntun — baik oleh keyboard yang cepat maupun oleh client
+	// nakal. Tanpa gerbang di sini, satu koneksi bisa memakai kuota database
+	// milik semua orang.
+	if allowed, err := h.limiter.Allow(ctx, "typing:"+user.ID.String(), h.typingRate); err == nil && !allowed.Allowed {
+		h.m.RateLimited.WithLabelValues("typing").Inc()
 		return
 	}
 
@@ -242,10 +338,24 @@ func (h *Handler) sendPresenceSnapshot(ctx context.Context, c *Client, userID uu
 	if err != nil {
 		return
 	}
+	online, err := h.hub.OnlineAmong(ctx, contacts)
+	if err != nil {
+		h.log.Error("ambil presence awal gagal", "user", userID, "err", err)
+		return
+	}
 	h.sendTo(c, hub.Event{
 		Type:    hub.EventPresenceSnapshot,
-		Payload: map[string]any{"online": h.hub.OnlineAmong(contacts)},
+		Payload: map[string]any{"online": online},
 	})
+}
+
+// sendWaiting menaruh event di antrean kirim, menunggu bila perlu.
+func (h *Handler) sendWaiting(ctx context.Context, c *Client, ev hub.Event) bool {
+	payload, err := json.Marshal(ev)
+	if err != nil {
+		return false
+	}
+	return c.EnqueueWait(ctx, payload)
 }
 
 func (h *Handler) sendTo(c *Client, ev hub.Event) {
@@ -253,7 +363,11 @@ func (h *Handler) sendTo(c *Client, ev hub.Event) {
 	if err != nil {
 		return
 	}
-	if !c.Enqueue(payload) {
-		c.close()
+	switch c.Enqueue(payload) {
+	case hub.Backpressure:
+		h.m.WSSlowDropped.Inc()
+		c.Close()
+	case hub.Gone:
+		// Koneksi sudah ditutup; tidak ada yang perlu dilakukan.
 	}
 }

@@ -20,5 +20,26 @@ services:
       timeout: 3s
       retries: 10
 
+  redis:
+    image: redis:8-alpine
+    container_name: chatapp-redis
+    restart: unless-stopped
+    # Redis di sini cuma jalur siaran dan penghitung kuota — semua isinya bisa
+    # dibangun ulang dari koneksi yang aktif. Persistensi dimatikan supaya tidak
+    # ada fsync di jalur yang menentukan cepat-lambatnya pesan sampai.
+    command: >
+      redis-server
+      --save ""
+      --appendonly no
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   chatapp-pgdata:

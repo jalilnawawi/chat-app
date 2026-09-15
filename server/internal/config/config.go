@@ -5,6 +5,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/jalilnawawi/chat-app/server/internal/ratelimit"
 )
 
 type Config struct {
@@ -16,6 +21,43 @@ type Config struct {
 	// yang diketik di address bar.
 	AllowedOrigins []string
 	SecureCookie   bool
+
+	// RedisURL kosong berarti mode satu instance: hub dan rate limit memakai
+	// memori proses. Ini bukan mode "kurang lengkap" — untuk pengembangan
+	// lokal dia justru yang paling jujur, karena `go run` cukup untuk
+	// menjalankan seluruh aplikasi.
+	RedisURL string
+
+	// InstanceID membedakan proses saat beberapa instance melayani bersamaan:
+	// jadi anggota klaim presence di Redis, dan label di metrik supaya grafik
+	// bisa dipisah per instance saat rolling deploy.
+	InstanceID string
+
+	// PresenceTTL adalah umur klaim presence sebuah instance di Redis.
+	// Menentukan seberapa cepat user yang instance-nya mati mendadak berubah
+	// jadi offline.
+	PresenceTTL time.Duration
+
+	MetricsAddr string
+
+	DBMaxConns int32
+
+	// ---- shutdown bertahap ----
+	// DrainDelay: jeda antara /readyz mulai menjawab 503 dan koneksi mulai
+	// ditutup. Load balancer butuh beberapa detik untuk berhenti mengirim
+	// trafik baru; menutup lebih awal berarti memutus koneksi yang baru saja
+	// diantar ke sini.
+	DrainDelay time.Duration
+	// DrainPeriod: rentang penyebaran penutupan WebSocket.
+	DrainPeriod time.Duration
+	// ShutdownTimeout: batas keras seluruh proses shutdown.
+	ShutdownTimeout time.Duration
+
+	// ---- kuota ----
+	MessageRate ratelimit.Rule
+	ConnectRate ratelimit.Rule
+	TypingRate  ratelimit.Rule
+	AuthRate    ratelimit.Rule
 }
 
 const defaultOrigins = "http://localhost:5174,http://127.0.0.1:5174,http://[::1]:5174"
@@ -25,20 +67,70 @@ func Load() (Config, error) {
 		DatabaseURL:    env("DATABASE_URL", "postgres://chat:chat@localhost:5433/chatapp?sslmode=disable"),
 		HTTPAddr:       env("HTTP_ADDR", ":8090"),
 		AllowedOrigins: splitOrigins(env("ALLOWED_ORIGIN", defaultOrigins)),
+		RedisURL:       os.Getenv("REDIS_URL"),
+		InstanceID:     env("INSTANCE_ID", defaultInstanceID()),
+		MetricsAddr:    env("METRICS_ADDR", ":9091"),
 	}
 
 	if len(c.AllowedOrigins) == 0 {
 		return Config{}, fmt.Errorf("ALLOWED_ORIGIN kosong")
 	}
 
-	secure, err := strconv.ParseBool(env("SECURE_COOKIE", "false"))
-	if err != nil {
-		return Config{}, fmt.Errorf("SECURE_COOKIE: %w", err)
+	var err error
+	if c.SecureCookie, err = envBool("SECURE_COOKIE", false); err != nil {
+		return Config{}, err
 	}
-	c.SecureCookie = secure
+	if c.PresenceTTL, err = envDuration("PRESENCE_TTL", 45*time.Second); err != nil {
+		return Config{}, err
+	}
+	if c.DrainDelay, err = envDuration("DRAIN_DELAY", 5*time.Second); err != nil {
+		return Config{}, err
+	}
+	if c.DrainPeriod, err = envDuration("DRAIN_PERIOD", 20*time.Second); err != nil {
+		return Config{}, err
+	}
+	if c.ShutdownTimeout, err = envDuration("SHUTDOWN_TIMEOUT", 60*time.Second); err != nil {
+		return Config{}, err
+	}
+
+	maxConns, err := envInt("DB_MAX_CONNS", 0)
+	if err != nil {
+		return Config{}, err
+	}
+	c.DBMaxConns = int32(maxConns)
+
+	// Nilai default dipilih dari perilaku manusia, bukan angka bulat yang enak
+	// dilihat: 120 pesan per menit adalah dua pesan per detik terus-menerus —
+	// jauh di atas orang mengetik sungguhan, tapi cukup untuk menghentikan
+	// skrip yang membanjiri ruang grup.
+	if c.MessageRate, err = envRule("RATE_MESSAGES", 20, 120); err != nil {
+		return Config{}, err
+	}
+	if c.ConnectRate, err = envRule("RATE_CONNECTS", 10, 60); err != nil {
+		return Config{}, err
+	}
+	if c.TypingRate, err = envRule("RATE_TYPING", 20, 120); err != nil {
+		return Config{}, err
+	}
+	// Login dan register jauh lebih ketat: keduanya memverifikasi argon2id,
+	// yang sengaja mahal. Tanpa batas, satu penyerang bisa menghabiskan CPU
+	// seluruh instance hanya dengan menebak password.
+	if c.AuthRate, err = envRule("RATE_AUTH", 10, 30); err != nil {
+		return Config{}, err
+	}
+
+	if c.ShutdownTimeout <= c.DrainDelay+c.DrainPeriod {
+		return Config{}, fmt.Errorf(
+			"SHUTDOWN_TIMEOUT (%s) harus lebih besar dari DRAIN_DELAY + DRAIN_PERIOD (%s)",
+			c.ShutdownTimeout, c.DrainDelay+c.DrainPeriod)
+	}
 
 	return c, nil
 }
+
+// MultiInstance melaporkan apakah konfigurasi ini siap dijalankan lebih dari
+// satu proses sekaligus.
+func (c Config) MultiInstance() bool { return c.RedisURL != "" }
 
 // AllowsOrigin melaporkan apakah origin permintaan termasuk yang diizinkan.
 func (c Config) AllowsOrigin(origin string) bool {
@@ -48,6 +140,17 @@ func (c Config) AllowsOrigin(origin string) bool {
 		}
 	}
 	return false
+}
+
+func defaultInstanceID() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "server"
+	}
+	// Hostname saja tidak cukup: dua proses di satu mesin (persis yang terjadi
+	// saat menguji rolling deploy lokal) akan berbagi ID dan saling menimpa
+	// klaim presence.
+	return host + "-" + uuid.NewString()[:8]
 }
 
 func splitOrigins(raw string) []string {
@@ -65,4 +168,62 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envBool(key string, fallback bool) (bool, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", key, err)
+	}
+	return v, nil
+}
+
+func envInt(key string, fallback int) (int, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return v, nil
+}
+
+func envDuration(key string, fallback time.Duration) (time.Duration, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	v, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	if v <= 0 {
+		return 0, fmt.Errorf("%s harus lebih dari nol", key)
+	}
+	return v, nil
+}
+
+// envRule membaca kuota dari dua variabel: <name>_BURST dan <name>_PER_MIN.
+func envRule(name string, burst int, perMinute float64) (ratelimit.Rule, error) {
+	b, err := envInt(name+"_BURST", burst)
+	if err != nil {
+		return ratelimit.Rule{}, err
+	}
+	raw := os.Getenv(name + "_PER_MIN")
+	if raw != "" {
+		perMinute, err = strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return ratelimit.Rule{}, fmt.Errorf("%s_PER_MIN: %w", name, err)
+		}
+	}
+	if b < 1 || perMinute <= 0 {
+		return ratelimit.Rule{}, fmt.Errorf("%s: burst dan laju harus positif", name)
+	}
+	return ratelimit.PerMinute(b, perMinute), nil
 }
