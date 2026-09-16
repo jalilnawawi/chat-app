@@ -207,6 +207,33 @@ export const api = {
   ackMentions: (conversationId: string, seq: number) =>
     post<{ mentionAckSeq: number }>(`/api/conversations/${conversationId}/mentions/ack`, { seq }),
 
+  /**
+   * Pengelolaan grup.
+   *
+   * Kelimanya menjawab dengan bentuk yang sama — judul dan daftar anggota
+   * setelah perubahan — supaya client tidak perlu tahu tindakan mana yang
+   * mengubah apa. Siaran ke anggota lain diurus server.
+   */
+  renameGroup: (conversationId: string, title: string) =>
+    request<GroupState>(`/api/conversations/${conversationId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+    }),
+
+  addMembers: (conversationId: string, userIds: string[]) =>
+    post<GroupState>(`/api/conversations/${conversationId}/members`, { userIds }),
+
+  removeMember: (conversationId: string, userId: string) =>
+    request<GroupState>(`/api/conversations/${conversationId}/members/${userId}`, {
+      method: 'DELETE',
+    }),
+
+  leaveGroup: (conversationId: string) =>
+    post<GroupState>(`/api/conversations/${conversationId}/leave`),
+
+  transferOwnership: (conversationId: string, userId: string) =>
+    post<GroupState>(`/api/conversations/${conversationId}/owner`, { userId }),
+
   addReaction: (messageId: string, emoji: string) =>
     post<ReactionResult>(`/api/messages/${messageId}/reactions`, { emoji }),
 
@@ -226,6 +253,13 @@ export const api = {
  * dua kali walau datang lewat dua jalan sekaligus (jawaban ini dan siaran
  * WebSocket).
  */
+/** Keadaan grup setelah satu tindakan pengelolaan. */
+export type GroupState = {
+  conversationId: string;
+  title: string;
+  members: Member[];
+};
+
 export type ReactionResult = {
   messageId: string;
   emoji: string;

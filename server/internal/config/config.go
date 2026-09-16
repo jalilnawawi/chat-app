@@ -119,6 +119,11 @@ type Config struct {
 	// bukan dilarang — yang tidak boleh adalah mengulanginya tiap beberapa
 	// detik.
 	MentionAllRate ratelimit.Rule
+	// GroupRate membatasi pengelolaan grup. Tiap tindakan menulis catatan
+	// sistem ke riwayat semua anggota sekaligus menyiarkan dua event, jadi yang
+	// dibatasi di sini bukan beban server melainkan kemampuan satu orang
+	// memenuhi percakapan orang lain dengan baris yang tidak mereka minta.
+	GroupRate ratelimit.Rule
 	// PushRate bukan kuota melawan penyalahgunaan, melainkan peredam dering:
 	// berapa kali sebuah percakapan boleh membangunkan satu orang. Bentuknya
 	// token bucket yang sama karena masalahnya memang sama — dan versi
@@ -245,6 +250,13 @@ func Load() (Config, error) {
 	// Angkanya dipilih dari cara rapat sungguhan diumumkan, bukan dari
 	// kemampuan server mengirim.
 	if c.MentionAllRate, err = envRule("RATE_MENTION_ALL", 2, 0.5); err != nil {
+		return Config{}, err
+	}
+	// Mengelola grup adalah tindakan sesekali, bukan sesuatu yang dilakukan
+	// terus-menerus: sepuluh beruntun sudah cukup untuk menyusun grup baru
+	// dalam sekali duduk, dan tiga puluh per menit jauh di atas kecepatan orang
+	// membaca daftar namanya sendiri.
+	if c.GroupRate, err = envRule("RATE_GROUP", 10, 30); err != nil {
 		return Config{}, err
 	}
 	// Satu dering per percakapan tiap 30 detik, dengan kelonggaran dua di awal

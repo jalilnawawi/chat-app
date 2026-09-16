@@ -17,6 +17,11 @@ var (
 	ErrNotFound  = errors.New("not found")
 	ErrConflict  = errors.New("conflict")
 	ErrForbidden = errors.New("forbidden")
+	// ErrInvalid adalah masukan yang bentuknya salah — bukan bentrok, bukan
+	// soal izin. Dipisahkan supaya "judul grup kosong" tidak dijawab 409
+	// "sudah ada atau bentrok", yang mengirim orang mencari bentrokan yang
+	// tidak pernah ada.
+	ErrInvalid = errors.New("invalid")
 )
 
 type Store struct{ pool *pgxpool.Pool }
@@ -189,6 +194,13 @@ func (s *Store) GetOrCreateDirect(ctx context.Context, me, peer uuid.UUID) (uuid
 }
 
 func (s *Store) CreateGroup(ctx context.Context, creator uuid.UUID, title string, members []uuid.UUID) (uuid.UUID, error) {
+	// Batas yang sama dengan jalur tambah anggota. Dua pintu masuk ke keadaan
+	// yang sama dengan batas yang berbeda berarti salah satunya bisa dipakai
+	// untuk melewati yang lain.
+	if len(withoutDuplicates(members, creator))+1 > maxGroupMembers {
+		return uuid.Nil, fmt.Errorf("%w: grup maksimal %d anggota", ErrConflict, maxGroupMembers)
+	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return uuid.Nil, err
@@ -233,12 +245,13 @@ func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conv
 		SELECT c.id, c.type, c.title, c.last_seq, cm.last_read_seq, c.created_at,
 		       cm.mention_seq, cm.mention_ack_seq,
 		       lm.id, lm.seq, lm.sender_id, lm.body, lm.attachments,
-		       lm.created_at, lm.edited_at, lm.deleted_at,
+		       lm.created_at, lm.edited_at, lm.deleted_at, lm.kind, lm.system_event,
 		       peer.id, peer.username, peer.display_name, peer.created_at
 		FROM conversation_members cm
 		JOIN conversations c ON c.id = cm.conversation_id
 		LEFT JOIN LATERAL (
-			SELECT id, seq, sender_id, body, attachments, created_at, edited_at, deleted_at
+			SELECT id, seq, sender_id, body, attachments, created_at, edited_at,
+			       deleted_at, kind, system_event
 			FROM messages WHERE conversation_id = c.id
 			ORDER BY seq DESC LIMIT 1
 		) lm ON true
@@ -269,6 +282,8 @@ func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conv
 			msgAt    *time.Time
 			msgEdit  *time.Time
 			msgDel   *time.Time
+			msgKind  *string
+			msgSys   *SystemEvent
 			peerID   *uuid.UUID
 			peerUser *string
 			peerName *string
@@ -278,6 +293,7 @@ func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conv
 			&c.ID, &c.Type, &c.Title, &c.LastSeq, &c.LastReadSeq, &created,
 			&c.MentionSeq, &c.MentionAckSeq,
 			&msgID, &msgSeq, &msgFrom, &msgBody, &msgAtt, &msgAt, &msgEdit, &msgDel,
+			&msgKind, &msgSys,
 			&peerID, &peerUser, &peerName, &peerAt,
 		); err != nil {
 			return nil, err
@@ -296,6 +312,7 @@ func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conv
 				Body: *msgBody, Attachments: msgAtt,
 				CreatedAt: *msgAt, EditedAt: msgEdit, DeletedAt: msgDel,
 				Mentions: []uuid.UUID{}, Reactions: []ReactionSummary{},
+				Kind: deref(msgKind, "user"), SystemEvent: msgSys,
 			}
 			c.UpdatedAt = *msgAt
 		}
@@ -397,7 +414,7 @@ func (s *Store) ConversationsOf(ctx context.Context, userID uuid.UUID) ([]uuid.U
 func messageCols(alias string) string {
 	return prefix(alias, "id", "conversation_id", "seq", "sender_id", "body",
 		"attachments", "created_at", "edited_at", "deleted_at",
-		"mentions", "mentions_all", "reaction_seq")
+		"mentions", "mentions_all", "reaction_seq", "kind", "system_event")
 }
 
 // replyCols adalah kolom pesan YANG DIBALAS, dibaca lewat self-join.
@@ -445,7 +462,7 @@ func scanMessage(row pgx.Row, m *Message) error {
 	)
 	if err := row.Scan(&m.ID, &m.ConversationID, &m.Seq, &m.SenderID, &m.Body,
 		&m.Attachments, &m.CreatedAt, &m.EditedAt, &m.DeletedAt,
-		&m.Mentions, &m.MentionsAll, &m.ReactionSeq,
+		&m.Mentions, &m.MentionsAll, &m.ReactionSeq, &m.Kind, &m.SystemEvent,
 		&repID, &repSeq, &repSender, &repBody, &repAtts, &repDeleted,
 	); err != nil {
 		return err
@@ -541,8 +558,26 @@ func (s *Store) SendMessage(ctx context.Context, p SendParams) (Message, bool, e
 		lastSeq  int64
 		convType string
 	)
-	err = tx.QueryRow(ctx,
-		`SELECT last_seq, type FROM conversations WHERE id = $1 FOR UPDATE`, convID,
+	// Keanggotaan diperiksa DI SINI, di bawah kunci yang sama yang
+	// mengalokasikan `seq` — bukan hanya di handler HTTP sebelum transaksi ini
+	// dibuka.
+	//
+	// Alasannya sama persis dengan alasan pemeriksaan sebutan menyatu dengan
+	// penulisannya di markMentioned: pemeriksaan yang terpisah dari tindakannya
+	// menyisakan celah di antara keduanya. Di sini celah itu berarti orang yang
+	// baru saja dikeluarkan dari grup masih bisa menyelipkan satu pesan, karena
+	// pengeluarannya terjadi persis setelah handler memastikan dia anggota.
+	//
+	// JOIN, bukan EXISTS: yang bukan anggota tidak menghasilkan baris sama
+	// sekali, jadi jawabannya jatuh ke cabang yang sama dengan percakapan yang
+	// memang tidak ada — dan itu memang jawaban yang benar untuknya.
+	err = tx.QueryRow(ctx, `
+		SELECT c.last_seq, c.type
+		FROM conversations c
+		JOIN conversation_members cm
+		  ON cm.conversation_id = c.id AND cm.user_id = $2
+		WHERE c.id = $1
+		FOR UPDATE OF c`, convID, senderID,
 	).Scan(&lastSeq, &convType)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Message{}, false, ErrNotFound
@@ -582,7 +617,7 @@ func (s *Store) SendMessage(ctx context.Context, p SendParams) (Message, bool, e
 		ID: p.ID, ConversationID: convID, Seq: seq, SenderID: senderID,
 		Body: p.Body, Attachments: []Attachment{},
 		ReplyTo: replyTo, Mentions: mentions, MentionsAll: mentionsAll,
-		Reactions: []ReactionSummary{},
+		Reactions: []ReactionSummary{}, Kind: "user",
 	}
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO messages (id, conversation_id, seq, sender_id, body,
@@ -668,9 +703,13 @@ func replyPreview(ctx context.Context, tx pgx.Tx, replyToID *uuid.UUID, convID u
 		atts      []Attachment
 		deletedAt *time.Time
 	)
+	// `kind = 'user'` menutup satu jalur yang tidak masuk akal: membalas catatan
+	// sistem. Catatan itu bukan ucapan siapa pun, dan mengutipnya menghasilkan
+	// gelembung yang mengaku dikatakan oleh orang yang cuma jadi pelakunya.
 	err := tx.QueryRow(ctx, `
 		SELECT `+replyCols("")+`
-		FROM messages WHERE id = $1 AND conversation_id = $2`, *replyToID, convID,
+		FROM messages
+		WHERE id = $1 AND conversation_id = $2 AND kind = 'user'`, *replyToID, convID,
 	).Scan(&rp.ID, &rp.Seq, &rp.SenderID, &rp.Body, &atts, &deletedAt)
 
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -823,7 +862,7 @@ func (s *Store) EditMessage(ctx context.Context, id, senderID uuid.UUID, body st
 	err := scanMessage(s.pool.QueryRow(ctx, `
 		WITH upd AS (
 			UPDATE messages SET body = $1, edited_at = now()
-			WHERE id = $2 AND sender_id = $3 AND deleted_at IS NULL
+			WHERE id = $2 AND sender_id = $3 AND deleted_at IS NULL AND kind = 'user'
 			RETURNING *
 		)
 		SELECT `+messageCols("m")+`, `+replyCols("rep")+`
@@ -858,7 +897,7 @@ func (s *Store) DeleteMessage(ctx context.Context, id, senderID uuid.UUID) (Mess
 	err = scanMessage(tx.QueryRow(ctx, `
 		WITH upd AS (
 			UPDATE messages SET body = '', attachments = '[]'::jsonb, deleted_at = now()
-			WHERE id = $1 AND sender_id = $2 AND deleted_at IS NULL
+			WHERE id = $1 AND sender_id = $2 AND deleted_at IS NULL AND kind = 'user'
 			RETURNING *
 		)
 		SELECT `+messageCols("m")+`, `+replyCols("rep")+`
@@ -932,6 +971,15 @@ func (s *Store) ContactIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, 
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// deref membaca pointer dengan nilai cadangan. Dipakai untuk kolom yang NULL
+// bukan karena kosong, melainkan karena LEFT JOIN-nya tidak menemukan baris.
+func deref(p *string, fallback string) string {
+	if p == nil {
+		return fallback
+	}
+	return *p
 }
 
 // Ping dipakai probe kesiapan. Sengaja lewat store, bukan pool langsung, supaya

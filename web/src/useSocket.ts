@@ -115,6 +115,21 @@ export function useSocket(enabled: boolean) {
           case 'conversation.new':
             s.applyConversation(ev.payload);
             break;
+          case 'conversation.updated':
+            s.applyConversationUpdated(
+              ev.payload.conversationId,
+              ev.payload.title,
+              ev.payload.members,
+            );
+            break;
+          case 'conversation.removed':
+            // Kita baru saja dikeluarkan atau keluar dari percakapan ini.
+            // Catatan sistemnya tidak akan pernah sampai — kita sudah tidak ada
+            // di daftar penerimanya — jadi event inilah satu-satunya kabar yang
+            // kita terima, dan tanpa dia percakapannya menggantung di sidebar
+            // sampai halamannya dimuat ulang.
+            s.applyConversationRemoved(ev.payload.conversationId);
+            break;
           case 'read.updated':
             s.applyRead(ev.payload.conversationId, ev.payload.userId, ev.payload.lastReadSeq);
             break;

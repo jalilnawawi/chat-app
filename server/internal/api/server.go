@@ -112,6 +112,26 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/conversations/{id}/members", s.requireAuth(http.HandlerFunc(s.handleMembers)))
 	mux.Handle("POST /api/conversations/{id}/read", s.requireAuth(http.HandlerFunc(s.handleMarkRead)))
 
+	// Pengelolaan grup. Kuotanya sendiri, dan sengaja ketat: tiap tindakan
+	// menulis catatan sistem ke riwayat DAN menyiarkan dua event ke seluruh
+	// anggota, jadi menambah lalu mengeluarkan orang berulang-ulang adalah cara
+	// memenuhi percakapan orang lain dengan baris yang tidak mereka minta.
+	mux.Handle("PATCH /api/conversations/{id}",
+		s.requireAuth(s.rateLimitByUser("group", s.cfg.GroupRate, http.HandlerFunc(s.handleRenameGroup))))
+	mux.Handle("POST /api/conversations/{id}/members",
+		s.requireAuth(s.rateLimitByUser("group", s.cfg.GroupRate, http.HandlerFunc(s.handleAddMembers))))
+	mux.Handle("DELETE /api/conversations/{id}/members/{userId}",
+		s.requireAuth(s.rateLimitByUser("group", s.cfg.GroupRate, http.HandlerFunc(s.handleRemoveMember))))
+	mux.Handle("POST /api/conversations/{id}/owner",
+		s.requireAuth(s.rateLimitByUser("group", s.cfg.GroupRate, http.HandlerFunc(s.handleTransferOwnership))))
+
+	// Keluar TIDAK dibatasi kuota. Ini satu-satunya tindakan yang dilakukan
+	// seseorang atas dirinya sendiri, dan menahan orang di dalam grup karena dia
+	// terlalu sering menekan tombol adalah bentuk penolakan yang tidak pernah
+	// pantas.
+	mux.Handle("POST /api/conversations/{id}/leave",
+		s.requireAuth(http.HandlerFunc(s.handleLeaveGroup)))
+
 	// Penanda sebutan punya endpoint SENDIRI, bukan menumpang /read. Keduanya
 	// bergerak pada saat yang berbeda: terbaca saat ruangnya dibuka, sebutan
 	// saat pesan yang memanggil namanya benar-benar terlihat. Satu endpoint
@@ -262,6 +282,8 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 // supaya tiap handler tidak mengulang pemetaan yang sama.
 func (s *Server) writeStoreError(w http.ResponseWriter, err error, context string) {
 	switch {
+	case errors.Is(err, store.ErrInvalid):
+		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "tidak ditemukan")
 	case errors.Is(err, store.ErrForbidden):

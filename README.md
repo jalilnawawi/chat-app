@@ -3,7 +3,8 @@
 Aplikasi chat realtime. Go + PostgreSQL di backend, Bun + React di frontend.
 Mendukung DM 1-on-1 dan grup, presence, typing indicator, read receipt, edit &
 hapus pesan, lampiran berkas, membalas pesan, menyebut orang (@), reaksi emoji,
-serta push notification untuk yang sedang tidak membuka aplikasi.
+kelola grup (tambah/keluarkan anggota, ganti judul, pindah pemilik), serta push
+notification untuk yang sedang tidak membuka aplikasi.
 
 Status: **MVP jalan end-to-end, dan sudah diuji untuk 1000 koneksi bersamaan.**
 Catatan operasional multi-instance ada di [docs/scaling.md](docs/scaling.md);
@@ -11,7 +12,8 @@ keputusan seputar lampiran dan notifikasi di
 [docs/lampiran-dan-push.md](docs/lampiran-dan-push.md); turunan gambar dan
 permintaan sepotong di
 [docs/thumbnail-dan-range.md](docs/thumbnail-dan-range.md); membalas, menyebut,
-dan bereaksi di [docs/balas-sebut-reaksi.md](docs/balas-sebut-reaksi.md).
+dan bereaksi di [docs/balas-sebut-reaksi.md](docs/balas-sebut-reaksi.md);
+pengelolaan grup di [docs/kelola-grup.md](docs/kelola-grup.md).
 
 ## Menjalankan
 
@@ -228,6 +230,26 @@ POST   /api/messages/{id}/reactions          { emoji }
 DELETE /api/messages/{id}/reactions          { emoji }
 ```
 
+Kelola grup — **pemilik mengelola, anggota bisa keluar**:
+
+```
+PATCH  /api/conversations/{id}                      { title }
+POST   /api/conversations/{id}/members              { userIds }
+DELETE /api/conversations/{id}/members/{userId}
+POST   /api/conversations/{id}/owner                { userId }
+POST   /api/conversations/{id}/leave                (siapa saja)
+```
+
+Kelimanya menolak percakapan bertipe `direct` dengan 404. Itu bukan kerapian:
+menambahkan orang ketiga ke sebuah DM akan mempertahankan `direct_key` milik dua
+orang pertama, sehingga percakapan itu tetap dianggap DM antara mereka berdua
+sekaligus berisi orang yang tidak pernah diajak siapa pun.
+
+Tiap perubahan meninggalkan **catatan sistem** — baris `messages` dengan
+`kind = 'system'` — sehingga dia ikut terbawa riwayat, cursor, dan susulan
+setelah reconnect tanpa jalur sinkronisasi baru. Catatan itu tidak bisa
+disunting, dihapus, dibalas, atau direaksi oleh siapa pun.
+
 `mentions/ack` sengaja TERPISAH dari `read`: menandai terbaca bergerak saat
 ruangnya dibuka, sedangkan sebutan baru padam setelah pesan yang memanggil
 namanya benar-benar terlihat di layar. Satu endpoint untuk keduanya berarti
@@ -250,6 +272,8 @@ Server -> client:
 | `message.new` | objek Message |
 | `message.updated` | objek Message (hasil edit atau hapus) |
 | `conversation.new` | objek Conversation |
+| `conversation.updated` | `{ conversationId, title, members }` — KEADAAN grup setelah dikelola; kejadiannya menyusul terpisah sebagai pesan sistem |
+| `conversation.removed` | `{ conversationId }` — dikirim HANYA ke orang yang baru saja keluar atau dikeluarkan |
 | `read.updated` | `{ conversationId, userId, lastReadSeq }` |
 | `typing` | `{ conversationId, userId, displayName, typing }` |
 | `presence` | `{ userId, online }` |

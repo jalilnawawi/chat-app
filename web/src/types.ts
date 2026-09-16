@@ -65,6 +65,24 @@ export type ReactionSummary = {
   mine: boolean;
 };
 
+/** Orang yang disebut sebuah catatan sistem, beserta namanya PADA SAAT ITU. */
+export type SystemParty = { id: string; name: string };
+
+/**
+ * Kejadian yang dicatat sistem: keanggotaan berubah, judul berganti.
+ *
+ * Yang disimpan server adalah KEJADIANNYA, bukan kalimatnya — kalimatnya
+ * disusun di sini, sehingga bahasanya bisa berubah tanpa menulis ulang riwayat
+ * siapa pun.
+ */
+export type SystemEvent = {
+  type: 'member.added' | 'member.removed' | 'member.left' | 'title.changed' | 'owner.changed';
+  actor: SystemParty;
+  targets?: SystemParty[];
+  /** Judul BARU, untuk title.changed. */
+  title?: string;
+};
+
 export type Message = {
   id: string;
   conversationId: string;
@@ -90,6 +108,16 @@ export type Message = {
    * event yang sama datang lewat jawaban HTTP DAN lewat siaran WebSocket.
    */
   reactionSeq: number;
+  /**
+   * 'system' untuk catatan keanggotaan; 'user' untuk yang ditulis orang.
+   *
+   * Catatan sistem menumpang tabel pesan yang sama supaya dia ikut terbawa oleh
+   * riwayat, cursor, dan susulan setelah reconnect tanpa jalur baru. Yang
+   * membedakannya cuma kolom ini — dan kolom ini pula yang menutup jalur edit,
+   * hapus, balas, dan reaksi untuknya.
+   */
+  kind: 'user' | 'system';
+  systemEvent?: SystemEvent;
 };
 
 export type Member = {
@@ -185,6 +213,18 @@ export type ServerEvent =
   | { type: 'message.new'; payload: Message }
   | { type: 'message.updated'; payload: Message }
   | { type: 'conversation.new'; payload: Conversation }
+  /**
+   * Keadaan grup setelah dikelola. Terpisah dari catatan sistem yang
+   * menyertainya, dan keduanya memang datang berpasangan: catatan itu adalah
+   * KEJADIAN yang masuk riwayat, ini adalah KEADAAN sekarang yang tidak punya
+   * tempat di riwayat.
+   */
+  | {
+      type: 'conversation.updated';
+      payload: { conversationId: string; title: string; members: Member[] };
+    }
+  /** Dikirim HANYA kepada orang yang baru saja berhenti jadi anggota. */
+  | { type: 'conversation.removed'; payload: { conversationId: string } }
   | { type: 'read.updated'; payload: { conversationId: string; userId: string; lastReadSeq: number } }
   | { type: 'typing'; payload: { conversationId: string; userId: string; displayName: string; typing: boolean } }
   | { type: 'presence'; payload: { userId: string; online: boolean } }

@@ -18,6 +18,10 @@ Membalas, menyebut, dan bereaksi: **SELESAI** (16 Sep 2026) — plus test
 pertama untuk `internal/store`, di atas harness Postgres yang dilewati sendiri
 bila databasenya tidak ada. Lihat [docs/balas-sebut-reaksi.md](docs/balas-sebut-reaksi.md).
 
+Kelola grup: **SELESAI** (16 Sep 2026) — ganti judul, tambah/keluarkan anggota,
+keluar, pindah pemilik, dan setiap perubahannya meninggalkan catatan di dalam
+percakapan. Lihat [docs/kelola-grup.md](docs/kelola-grup.md).
+
 Berikutnya: **Fase 10 — kelola akun & profil.**
 
 Legend: `[ ]` belum · `[~]` jalan · `[x]` selesai
@@ -397,6 +401,101 @@ mana pun yang tidak membuka halamannya. Uraian lengkap di
   dia menyeret kembali urusan deployment lewat kebutuhan server TURN.
 - **Terjemahan, pesan terjadwal, self-destruct.** Menarik, tapi tidak satu pun
   mengubah bentuk aplikasi seperti tiga fitur di atas.
+
+## Fase 9b — Kelola grup
+Sampai Fase 9 sebuah grup hanya bisa DIBUAT. Setelah itu dia beku: tidak ada
+cara menambah orang, mengeluarkan orang, mengganti judulnya, atau keluar
+darinya. Keputusan lengkap di [docs/kelola-grup.md](docs/kelola-grup.md).
+
+Satu aturan menaungi seluruhnya: **pemilik mengelola, anggota bisa keluar.**
+
+### Keputusan yang menentukan bentuknya
+- [x] **Perubahan keanggotaan adalah PESAN, bukan sekadar perubahan baris.**
+
+      Menyiarkan "daftar anggota berubah" lalu selesai membuat perubahannya
+      tidak punya jejak — orang yang membuka aplikasi besok pagi cuma melihat
+      jumlah anggotanya berbeda. Percakapan SUDAH punya catatan berurutan yang
+      tahan putus koneksi, dan menumpang di sana berarti catatan keanggotaan
+      ikut terbawa riwayat, cursor, dan susulan reconnect tanpa jalur baru.
+
+      Berbeda dari reaksi di Fase 9, yang TIDAK bisa menumpang karena dia
+      mengubah pesan lama yang seq-nya sudah berhenti bergerak.
+- [x] Kolom `kind` memisahkan ucapan orang dari catatan sistem — dan itu bukan
+      kerapian tampilan: tanpanya, pelaku bisa MENYUNTING catatan "Budi
+      mengeluarkan Ani" jadi kalimat apa pun, karena dia memang `sender_id`-nya
+- [x] Catatan sistem tidak bisa disunting, dihapus, dibalas, atau direaksi —
+      satu aturan, empat jalur, masing-masing satu klausa `AND kind = 'user'`
+- [x] Yang disimpan adalah KEJADIANNYA, bukan kalimatnya; kalimatnya disusun
+      client sehingga bahasanya bisa berubah tanpa menulis ulang riwayat
+- [x] Nama orangnya IKUT disalin ke dalam catatan — yang dikeluarkan sudah tidak
+      ada di daftar anggota, dan "mengeluarkan (tidak dikenal)" gagal justru pada
+      hal yang ingin diketahui orang. Sejalan dengan aturan salinan sejak Fase 7:
+      yang boleh disalin adalah yang tidak pernah berubah.
+
+### Aturan
+- [x] **DM tidak bisa dikelola.** Menambahkan orang ketiga akan mempertahankan
+      `direct_key` milik dua orang pertama — percakapan itu tetap dianggap DM
+      antara mereka berdua sekaligus berisi orang yang tidak pernah diajak siapa
+      pun. Dijawab 404, bukan 403.
+- [x] Ganti judul, tambah, keluarkan, pindah kepemilikan: hak pemilik
+- [x] Keluar: hak semua orang atas dirinya sendiri, dan TIDAK dibatasi kuota
+- [x] Pemilik tidak bisa dikeluarkan, dan tidak bisa mengeluarkan dirinya sendiri
+- [x] **Pemilik yang keluar tidak ditahan**; kepemilikan pindah ke anggota
+      terlama. Menuntutnya memindahkan dulu menukar satu langkah dengan grup yang
+      tidak bisa dikelola siapa pun selamanya begitu pemiliknya berhenti memakai
+      aplikasi ini.
+- [x] `maxGroupMembers = 200`, dipasang di jalur buat grup MAUPUN tambah anggota
+- [x] Semuanya dalam satu transaksi dengan baris percakapan terkunci, memakai
+      alokasi `seq` yang sama dengan pengiriman pesan biasa
+
+### Siaran
+- [x] `conversation.new` ke yang baru bergabung, dikirim lebih dulu supaya
+      catatan sistem yang menyusul punya tempat untuk mendarat — dan
+      penerimanya dipersempit, karena tiap penerima butuh query sendiri
+- [x] `message.new` (kejadian) + `conversation.updated` (keadaan) ke anggota
+      yang tersisa
+- [x] `conversation.removed` ke yang baru saja pergi — dia tidak ada di daftar
+      penerima dua kiriman pertama dan tidak akan pernah menerimanya
+- [x] Tidak satu pun membangunkan push notification
+
+### UI
+- [x] Panel kelola grup, isinya berbeda untuk pemilik dan anggota — tombol yang
+      tidak boleh ditekan seseorang tidak ditampilkan kepadanya, bukan
+      ditampilkan lalu ditolak server
+- [x] Catatan sistem tampil sebagai baris tengah tanpa gelembung: bentuknya
+      sendiri yang mengatakan "ini bukan sesuatu yang dikatakan orang"
+- [x] Pratinjau sidebar untuk catatan sistem — tanpa itu, grup yang perubahan
+      terakhirnya "Budi keluar" menampilkan baris kosong
+- [x] "Kepemilikan pindah ke anggota terlama" dikatakan di muka, bukan setelah
+      orangnya terlanjur keluar
+
+### Verifikasi
+- [x] `go vet` + `go test -race ./...` bersih; 9 test store baru
+- [x] `tsc --noEmit` + `vite build` bersih
+- [x] Uji HTTP langsung: DM ditolak untuk keempat tindakan dan tetap berisi dua
+      orang, anggota biasa (403), orang luar (404), judul kosong (400), id yang
+      bukan pengguna (404), mengeluarkan pemilik (409), keempat cara menyentuh
+      catatan sistem ditolak, dan yang dikeluarkan kehilangan seluruh aksesnya
+- [x] Verifikasi browser (Brave, TIGA konteks terpisah, puppeteer-core): 28/28
+      lulus; test Fase 9 dijalankan ulang 19/19 dan 17/17 tanpa regresi
+
+### Dua celah yang ditemukan OLEH menulis test-nya
+Keduanya lolos `go vet` dan `go build`. Uraian lengkap di
+[docs/kelola-grup.md](docs/kelola-grup.md).
+
+1. **Reaksi ke catatan sistem lolos.** Aturan "tidak bisa disentuh" sudah
+   ditulis untuk edit, hapus, dan balas, tapi `changeReaction` terlewat.
+2. **`SendMessage` tidak memeriksa keanggotaannya sendiri** — itu diserahkan ke
+   handler HTTP, sebagai query terpisah SEBELUM transaksi dibuka. Bentuk
+   celahnya persis sama dengan yang ditutup Fase 9 pada validasi sebutan: orang
+   yang baru saja dikeluarkan masih bisa menyelipkan satu pesan, karena
+   pengeluarannya terjadi persis setelah handler memastikan dia anggota.
+   Sekarang keanggotaan ikut diperiksa di dalam query yang mengunci percakapan.
+
+### Satu hal yang ditemukan OLEH menjalankannya lewat HTTP
+Judul grup kosong dijawab **409 "sudah ada atau bentrok"** — status yang
+mengirim orang mencari bentrokan yang tidak pernah ada. Ditambahkan
+`store.ErrInvalid` yang dipetakan ke 400, di `writeStoreError` bersama yang lain.
 
 ## Fase 10 — Kelola akun & profil
 Sampai Fase 9 sebuah akun hanya punya username, nama tampilan, dan password.

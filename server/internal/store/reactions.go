@@ -117,12 +117,13 @@ func (s *Store) changeReaction(
 		FROM messages m
 		JOIN conversation_members cm
 		  ON cm.conversation_id = m.conversation_id AND cm.user_id = $2
-		WHERE m.id = $1 AND m.deleted_at IS NULL`, messageID, userID).Scan(&convID)
+		WHERE m.id = $1 AND m.deleted_at IS NULL AND m.kind = 'user'`, messageID, userID).Scan(&convID)
 
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Satu jawaban untuk tiga keadaan: pesannya tidak ada, sudah dihapus,
-		// atau ada di percakapan yang bukan milik pemanggil. Membedakan yang
-		// ketiga berarti memberi tahu orang asing bahwa pesan itu eksis.
+		// Satu jawaban untuk empat keadaan: pesannya tidak ada, sudah dihapus,
+		// bukan ucapan siapa pun (catatan sistem), atau ada di percakapan yang
+		// bukan milik pemanggil. Membedakan yang terakhir berarti memberi tahu
+		// orang asing bahwa pesan itu eksis.
 		return ReactionChange{}, ErrNotFound
 	}
 	if err != nil {

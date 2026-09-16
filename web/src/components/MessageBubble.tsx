@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import AttachmentList from './AttachmentList';
 import ReactionRow from './ReactionRow';
-import type { Message, PendingMessage, ReplyPreview } from '../types';
+import type { Message, PendingMessage, ReplyPreview, SystemEvent } from '../types';
 
 type Props = {
   message?: Message;
@@ -55,6 +55,19 @@ export default function MessageBubble({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message?.body ?? '');
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // Catatan sistem bukan ucapan siapa pun, jadi dia tidak berbentuk gelembung:
+  // tidak berpihak kiri atau kanan, tidak punya tombol, tidak bisa disentuh.
+  // Bentuknya sendiri yang mengatakan "ini bukan sesuatu yang dikatakan orang".
+  if (message?.kind === 'system' && message.systemEvent) {
+    return (
+      <div className="my-2 flex justify-center px-6">
+        <p className="rounded-full bg-canvas px-3 py-1 text-center text-[11px] text-muted">
+          {systemText(message.systemEvent)}
+        </p>
+      </div>
+    );
+  }
 
   const body = message?.body ?? pending?.body ?? '';
   const createdAt = message?.createdAt ?? pending?.createdAt ?? '';
@@ -316,4 +329,35 @@ function Highlighted({ text, names }: { text: string; names: { name: string; isM
 
 function escapeRegExp(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Menyusun kalimat untuk sebuah catatan sistem.
+ *
+ * Kalimatnya dirakit DI SINI, bukan disimpan di server. Yang tersimpan cuma
+ * kejadiannya — siapa melakukan apa kepada siapa — sehingga bahasanya bisa
+ * berubah, atau diterjemahkan, tanpa menulis ulang riwayat siapa pun.
+ *
+ * Namanya diambil dari catatan itu sendiri, bukan dari daftar anggota: orang
+ * yang dikeluarkan sudah tidak ada di sana, dan "Budi mengeluarkan (tidak
+ * dikenal)" gagal justru pada satu hal yang ingin diketahui orang.
+ */
+function systemText(ev: SystemEvent): string {
+  const actor = ev.actor.name;
+  const targets = (ev.targets ?? []).map(t => t.name).join(', ');
+
+  switch (ev.type) {
+    case 'member.added':
+      return `${actor} menambahkan ${targets}`;
+    case 'member.removed':
+      return `${actor} mengeluarkan ${targets}`;
+    case 'member.left':
+      return `${actor} keluar dari grup`;
+    case 'title.changed':
+      return `${actor} mengganti judul grup jadi "${ev.title}"`;
+    case 'owner.changed':
+      return `${actor} menjadikan ${targets} pemilik grup`;
+    default:
+      return 'Grup diperbarui';
+  }
 }

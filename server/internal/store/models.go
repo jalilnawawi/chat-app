@@ -46,6 +46,50 @@ type Message struct {
 	// menyimpan nilai terbesar yang pernah dilihatnya sebagai cursor resume
 	// kedua, di samping `seq`.
 	ReactionSeq int64 `json:"reactionSeq"`
+
+	// Kind memisahkan apa yang ditulis orang ("user") dari apa yang dicatat
+	// sistem ("system") — bergabung, keluar, dikeluarkan, judul berganti.
+	//
+	// Pesan sistem menumpang tabel yang sama supaya dia ikut terbawa oleh
+	// seluruh mesin yang sudah ada: riwayat, cursor, dan susulan setelah
+	// reconnect. Yang membedakannya cuma satu kolom, dan kolom itulah yang
+	// menutup jalur edit, hapus, balas, dan reaksi untuknya.
+	Kind string `json:"kind"`
+
+	// SystemEvent nil untuk pesan biasa.
+	SystemEvent *SystemEvent `json:"systemEvent,omitempty"`
+}
+
+// SystemParty adalah orang yang disebut sebuah catatan sistem, beserta namanya
+// PADA SAAT ITU.
+//
+// Namanya ikut disalin, dan itu disengaja: orang yang dikeluarkan tidak lagi
+// ada di daftar anggota, jadi client tidak punya tempat untuk mencarinya.
+// Sejalan dengan aturan salinan yang sama sejak Fase 7 — yang boleh disalin
+// adalah yang tidak pernah berubah, dan catatan sejarah memang dibekukan pada
+// saat kejadiannya.
+type SystemParty struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+// Jenis catatan sistem. Yang disimpan adalah KEJADIANNYA, bukan kalimatnya —
+// kalimatnya disusun client, sehingga bahasanya bisa berubah tanpa menulis
+// ulang riwayat siapa pun.
+const (
+	SystemMemberAdded   = "member.added"
+	SystemMemberRemoved = "member.removed"
+	SystemMemberLeft    = "member.left"
+	SystemTitleChanged  = "title.changed"
+	SystemOwnerChanged  = "owner.changed"
+)
+
+type SystemEvent struct {
+	Type    string        `json:"type"`
+	Actor   SystemParty   `json:"actor"`
+	Targets []SystemParty `json:"targets,omitempty"`
+	// Title diisi untuk title.changed: judul BARU-nya.
+	Title string `json:"title,omitempty"`
 }
 
 // ReplyPreview adalah secuil pesan yang dibalas, secukupnya untuk gelembung

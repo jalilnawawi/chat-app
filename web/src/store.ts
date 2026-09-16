@@ -78,6 +78,12 @@ type State = {
   noteMention: (conversationId: string, userId: string, displayName: string) => void;
   setMentionAll: (conversationId: string, all: boolean) => void;
   toggleReaction: (conversationId: string, messageId: string, emoji: string) => Promise<void>;
+
+  renameGroup: (conversationId: string, title: string) => Promise<void>;
+  addMembers: (conversationId: string, userIds: string[]) => Promise<void>;
+  removeMember: (conversationId: string, userId: string) => Promise<void>;
+  transferOwnership: (conversationId: string, userId: string) => Promise<void>;
+  leaveGroup: (conversationId: string) => Promise<void>;
   addFiles: (conversationId: string, files: File[]) => void;
   retryUpload: (conversationId: string, key: string) => void;
   removeUpload: (conversationId: string, key: string) => void;
@@ -99,6 +105,8 @@ type State = {
     entries: { messageId: string; reactionSeq: number; reactions: ReactionSummary[] }[],
   ) => void;
   applyConversation: (c: Conversation) => void;
+  applyConversationUpdated: (conversationId: string, title: string, members: Member[]) => void;
+  applyConversationRemoved: (conversationId: string) => void;
   applyRead: (conversationId: string, userId: string, lastReadSeq: number) => void;
   applyTyping: (conversationId: string, userId: string, displayName: string, typing: boolean) => void;
   setOnline: (ids: string[]) => void;
@@ -391,6 +399,44 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
+  /**
+   * Kelima tindakan pengelolaan grup.
+   *
+   * Semuanya menerapkan jawabannya sendiri ke state lewat jalur yang SAMA
+   * dengan yang dipakai siaran ke anggota lain (applyConversationUpdated).
+   * Server memang menyiarkannya ke kita juga, tapi menunggu siaran itu berarti
+   * layar orang yang menekan tombolnya sendiri adalah yang paling terakhir
+   * berubah — dan applyConversationUpdated memang menimpa, jadi kabar yang
+   * datang belakangan tidak merusak apa pun.
+   */
+  renameGroup: async (conversationId, title) => {
+    const got = await api.renameGroup(conversationId, title);
+    get().applyConversationUpdated(conversationId, got.title, got.members);
+  },
+
+  addMembers: async (conversationId, userIds) => {
+    const got = await api.addMembers(conversationId, userIds);
+    get().applyConversationUpdated(conversationId, got.title, got.members);
+  },
+
+  removeMember: async (conversationId, userId) => {
+    const got = await api.removeMember(conversationId, userId);
+    get().applyConversationUpdated(conversationId, got.title, got.members);
+  },
+
+  transferOwnership: async (conversationId, userId) => {
+    const got = await api.transferOwnership(conversationId, userId);
+    get().applyConversationUpdated(conversationId, got.title, got.members);
+  },
+
+  leaveGroup: async conversationId => {
+    await api.leaveGroup(conversationId);
+    // Siaran "kamu bukan anggota lagi" memang menyusul dari server, tapi
+    // percakapan yang baru saja kita tinggalkan tidak boleh masih terbuka di
+    // layar selama perjalanan itu.
+    get().applyConversationRemoved(conversationId);
+  },
+
   addFiles: (conversationId, files) => {
     const existing = get().uploads[conversationId] ?? [];
     const room = MAX_ATTACHMENTS - existing.length;
@@ -559,6 +605,49 @@ export const useStore = create<State>((set, get) => ({
 
   applyConversation: c =>
     set(s => (s.conversations.some(x => x.id === c.id) ? s : { conversations: [c, ...s.conversations] })),
+
+  applyConversationUpdated: (conversationId, title, members) =>
+    set(s => ({
+      conversations: s.conversations.map(c =>
+        c.id === conversationId ? { ...c, title } : c,
+      ),
+      // Ditimpa, bukan digabung: yang datang adalah KEADAAN setelah perubahan,
+      // dan orang yang baru saja dikeluarkan memang harus hilang dari daftar.
+      members: { ...s.members, [conversationId]: members },
+    })),
+
+  applyConversationRemoved: conversationId =>
+    set(s => {
+      // objectURL pratinjau dilepas lebih dulu. Dia menahan berkasnya di memori
+      // sampai dilepas, dan membuang entrinya saja meninggalkan gambar yang
+      // tidak lagi punya siapa pun yang bisa melepaskannya — kebocoran yang
+      // sama persis dengan yang ditutup di reset().
+      for (const u of s.uploads[conversationId] ?? []) {
+        if (u.previewUrl) URL.revokeObjectURL(u.previewUrl);
+        files.delete(u.key);
+      }
+
+      // Semua yang menempel pada percakapan ini ikut dibuang. Menyisakan
+      // riwayatnya di memori berarti percakapan yang sudah bukan milik kita
+      // tetap bisa muncul kembali begitu ada satu event yang menyebut id-nya.
+      const drop = <T,>(rec: Record<string, T>) => {
+        const next = { ...rec };
+        delete next[conversationId];
+        return next;
+      };
+      return {
+        conversations: s.conversations.filter(c => c.id !== conversationId),
+        activeId: s.activeId === conversationId ? null : s.activeId,
+        messages: drop(s.messages),
+        pending: drop(s.pending),
+        uploads: drop(s.uploads),
+        hasMore: drop(s.hasMore),
+        members: drop(s.members),
+        typing: drop(s.typing),
+        replyTo: drop(s.replyTo),
+        mentionDraft: drop(s.mentionDraft),
+      };
+    }),
 
   applyRead: (conversationId, userId, lastReadSeq) =>
     set(s => {

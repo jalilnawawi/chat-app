@@ -21,6 +21,27 @@ function preview(c: Conversation): string {
   const last = c.lastMessage;
   if (!last) return 'Belum ada pesan';
   if (last.deletedAt) return 'Pesan dihapus';
+
+  // Catatan sistem tidak punya body. Tanpa cabang ini, grup yang perubahan
+  // terakhirnya adalah "Budi keluar" menampilkan baris kosong — yang terbaca
+  // sebagai "belum ada apa-apa", padahal baru saja ada kejadian.
+  if (last.kind === 'system' && last.systemEvent) {
+    const ev = last.systemEvent;
+    const siapa = (ev.targets ?? []).map(t => t.name).join(', ');
+    switch (ev.type) {
+      case 'member.added':
+        return `${ev.actor.name} menambahkan ${siapa}`;
+      case 'member.removed':
+        return `${ev.actor.name} mengeluarkan ${siapa}`;
+      case 'member.left':
+        return `${ev.actor.name} keluar dari grup`;
+      case 'title.changed':
+        return `Judul grup jadi "${ev.title}"`;
+      case 'owner.changed':
+        return `${siapa} jadi pemilik grup`;
+    }
+  }
+
   if (last.body) return last.body;
 
   const atts = last.attachments ?? [];
