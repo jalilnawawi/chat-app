@@ -33,19 +33,55 @@ type Message struct {
 // percakapan, jadi satu-satunya tempat yang bisa menjawab "boleh tidak orang
 // ini membaca file ini" adalah server yang menyimpan keanggotaannya.
 type Attachment struct {
-	ID     uuid.UUID `json:"id"`
-	URL    string    `json:"url"`
-	Name   string    `json:"name"`
-	MIME   string    `json:"mime"`
-	Size   int64     `json:"size"`
-	Width  *int      `json:"width,omitempty"`
-	Height *int      `json:"height,omitempty"`
+	ID   uuid.UUID `json:"id"`
+	URL  string    `json:"url"`
+	Name string    `json:"name"`
+	MIME string    `json:"mime"`
+	Size int64     `json:"size"`
+
+	// Ukuran gambar sebagaimana AKAN TERLIHAT — hasil membaca header berkasnya
+	// di server, bukan angka yang diakui client. Dipakai memesan ruang di layar
+	// sebelum gambarnya termuat.
+	Width  *int `json:"width,omitempty"`
+	Height *int `json:"height,omitempty"`
+
+	// ThumbURL kosong berarti lampiran ini tidak punya turunan kecil, dan
+	// client memakai URL aslinya. Tiga hal berakhir di keadaan itu: bukan
+	// gambar, sudah cukup kecil untuk dipakai apa adanya, dan pembuatan
+	// turunannya gagal. Client tidak perlu membedakan ketiganya — jawabannya
+	// sama.
+	ThumbURL string `json:"thumbUrl,omitempty"`
 }
 
 // AttachmentURL menyusun alamat unduh sebuah lampiran. Client tidak pernah
 // merangkainya sendiri, supaya bentuk alamatnya bisa berubah tanpa memaksa
 // semua pesan lama ditulis ulang.
 func AttachmentURL(id uuid.UUID) string { return "/api/attachments/" + id.String() }
+
+// AttachmentThumbURL menyusun alamat turunan kecil. Jalur terpisah, bukan
+// parameter query pada alamat aslinya: turunan dan aslinya adalah dua byte yang
+// berbeda dan keduanya disimpan selamanya, jadi keduanya layak punya alamat
+// sendiri yang bisa di-cache sendiri.
+func AttachmentThumbURL(id uuid.UUID) string {
+	return "/api/attachments/" + id.String() + "/thumb"
+}
+
+// StoredAttachment adalah lampiran beserta bagian yang tidak pernah dikirim ke
+// client: di mana byte-nya sebenarnya tersimpan.
+//
+// Dipisahkan dari Attachment supaya alamat internal penyimpanan tidak bisa
+// ikut terbawa ke JSON hanya karena suatu hari ada yang menambahkan field.
+type StoredAttachment struct {
+	Attachment
+
+	Key string
+
+	// Kosong bila tidak ada turunan. Ketiganya lahir dan mati bersama —
+	// dijaga juga oleh CHECK di sisi database.
+	ThumbKey  string
+	ThumbMIME string
+	ThumbSize int64
+}
 
 type Member struct {
 	UserID      uuid.UUID `json:"userId"`

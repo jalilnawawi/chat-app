@@ -25,6 +25,14 @@ export type Attachment = {
   size: number;
   width?: number;
   height?: number;
+  /**
+   * Alamat turunan kecil, kosong bila tidak ada.
+   *
+   * Tiga hal berakhir tanpa turunan: bukan gambar, sudah cukup kecil untuk
+   * dipakai apa adanya, dan pembuatannya gagal di server. Client tidak perlu
+   * membedakan ketiganya — jawabannya sama, pakai `url`.
+   */
+  thumbUrl?: string;
 };
 
 export type Message = {

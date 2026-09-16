@@ -8,7 +8,9 @@ membuka aplikasi.
 Status: **MVP jalan end-to-end, dan sudah diuji untuk 1000 koneksi bersamaan.**
 Catatan operasional multi-instance ada di [docs/scaling.md](docs/scaling.md);
 keputusan seputar lampiran dan notifikasi di
-[docs/lampiran-dan-push.md](docs/lampiran-dan-push.md).
+[docs/lampiran-dan-push.md](docs/lampiran-dan-push.md); turunan gambar dan
+permintaan sepotong di
+[docs/thumbnail-dan-range.md](docs/thumbnail-dan-range.md).
 
 ## Menjalankan
 
@@ -73,6 +75,7 @@ server/
   internal/hub/        fan-out event realtime — memori proses atau Redis pub/sub
   internal/ratelimit/  token bucket per user, lokal atau dibagi lewat Redis
   internal/blob/       penyimpanan isi lampiran (SeaweedFS lewat filer-nya)
+  internal/imaging/    turunan kecil untuk gambar: masukannya byte, keluarannya byte
   internal/push/       notifikasi Web Push: siapa yang layak dibangunkan, kapan
   internal/metrics/    seluruh instrumen Prometheus di satu tempat
   internal/ws/         satu koneksi WebSocket: heartbeat, backpressure, resume
@@ -86,6 +89,7 @@ web/
   src/components/      UI
 docs/scaling.md        catatan operasional multi-instance
 docs/lampiran-dan-push.md  keputusan seputar lampiran dan notifikasi
+docs/thumbnail-dan-range.md  turunan gambar dan permintaan sepotong
 ```
 
 ## Keputusan desain
@@ -185,12 +189,25 @@ Uraian lengkap keduanya di [docs/lampiran-dan-push.md](docs/lampiran-dan-push.md
 ## Lampiran
 
 ```
-POST   /api/attachments?w=&h=     multipart, field "file" → objek Attachment
-GET    /api/attachments/{id}      isi berkasnya, hanya untuk yang berhak
+POST   /api/attachments?w=&h=       multipart, field "file" → objek Attachment
+GET    /api/attachments/{id}        isi berkasnya, hanya untuk yang berhak
+GET    /api/attachments/{id}/thumb  turunan kecil, izin yang sama persis
 ```
 
 Id yang dikembalikan disebut di `attachmentIds` saat mengirim pesan. Satu pesan
 boleh membawa sampai sepuluh lampiran, dan boleh tanpa teks sama sekali.
+
+Gambar yang lebih besar dari `THUMBNAIL_MAX_DIM` dibuatkan turunan saat diunggah,
+dan `thumbUrl` ikut di objek Attachment. Kosongnya field itu berarti pakai `url`
+biasa — bukan gambar, sudah cukup kecil, atau pembuatannya gagal; client tidak
+perlu membedakan ketiganya. Foto 4000 x 3000 turun dari 6,2 MB jadi 13 KB.
+
+Kedua alamat menerima `Range`, menjawab `Accept-Ranges: bytes`, dan membalas 206
+dengan `Content-Range` untuk potongan yang benar-benar dilayani penyimpanan —
+itu yang membuat video panjang bisa dilompati tanpa mengunduh bagian sebelumnya.
+Rentang yang bentuknya tidak dikenali diabaikan (kirim utuh); yang menunjuk ke
+luar berkas dijawab 416. Uraiannya di
+[docs/thumbnail-dan-range.md](docs/thumbnail-dan-range.md).
 
 ## Notifikasi
 
@@ -252,3 +269,11 @@ Test unit menutup hal-hal yang keliru diam-diam: fan-out dan backpressure hub,
 token bucket, percakapan dengan filer SeaweedFS, penyaringan penerima notifikasi
 (online dan peredam dering), serta penyusunan kunci penyimpanan lampiran — yang
 terakhir memastikan nama berkas kiriman tidak pernah ikut menentukan lokasi.
+
+Fase 8 menambah empat lagi yang sifatnya sama: penguraian header `Range`
+(termasuk bentuk sufiks `bytes=-500` yang dipakai pemutar untuk membaca indeks
+MP4 di ujung berkas), penyajian 200/206/416 termasuk saat penyimpanan MENGABAIKAN
+rentang yang diminta, pembuatan turunan beserta penolakan gambar yang terlalu
+banyak pikselnya, dan pembacaan orientasi EXIF pada berkas yang sengaja
+dipotong — yang terakhir menjaga berkas cacat berakhir sebagai error, bukan
+sebagai panic.

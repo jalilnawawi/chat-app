@@ -4,6 +4,7 @@ import (
 	"mime"
 	"net/http/httptest"
 	"net/url"
+	"path"
 	"strings"
 	"testing"
 
@@ -224,5 +225,90 @@ func TestHasDuplicateMenangkapLampiranGanda(t *testing.T) {
 	}
 	if hasDuplicate(nil) {
 		t.Error("daftar kosong dianggap duplikat")
+	}
+}
+
+// Video dan rekaman suara boleh diputar di dalam halaman. Menambah tipe ke
+// daftar inline adalah keputusan keamanan, jadi yang diuji di sini bukan hanya
+// bahwa video jadi inline — melainkan bahwa yang BISA membawa kode tetap tidak.
+func TestRekamanDiputarInlineTapiBerkasAktifTetapTerunduh(t *testing.T) {
+	cases := map[string]string{
+		"video/mp4":       "inline",
+		"video/webm":      "inline",
+		"audio/mpeg":      "inline",
+		"application/ogg": "inline",
+
+		// Keduanya DIRANCANG untuk membawa script, dan keduanya tetap di luar.
+		"image/svg+xml": "attachment",
+		"text/html":     "attachment",
+		// Video yang tidak ada di daftar ikut terunduh: daftarnya izin, bukan
+		// larangan, jadi tipe baru tidak pernah lolos tanpa disebut.
+		"video/quicktime": "attachment",
+	}
+
+	for mime, want := range cases {
+		w := httptest.NewRecorder()
+		setAttachmentHeaders(w, store.Attachment{Name: "berkas", MIME: mime})
+
+		if got := w.Header().Get("Content-Disposition"); !strings.HasPrefix(got, want) {
+			t.Errorf("%s disajikan sebagai %q, mau %s", mime, got, want)
+		}
+	}
+}
+
+// Tanpa header ini, browser tidak akan pernah MENCOBA meminta sepotong:
+// pemutar video menganggap berkasnya tidak bisa dilompati dan mengunduhnya
+// dari awal sampai posisi yang diklik.
+func TestAcceptRangesSelaluDisebut(t *testing.T) {
+	for _, mime := range []string{"video/mp4", "image/png", "application/pdf"} {
+		w := httptest.NewRecorder()
+		setAttachmentHeaders(w, store.Attachment{Name: "berkas", MIME: mime})
+
+		if got := w.Header().Get("Accept-Ranges"); got != "bytes" {
+			t.Errorf("%s: Accept-Ranges = %q, mau bytes", mime, got)
+		}
+	}
+}
+
+func TestThumbStorageKeyBertetanggaDenganAslinya(t *testing.T) {
+	// Turunan JPEG dari sumber PNG: ekstensinya mengikuti turunannya, bukan
+	// sumbernya, karena byte yang tersimpan di sana memang JPEG.
+	got := thumbStorageKey("2026/09/018f2c80-0000-7000-8000-000000000001.png", "image/jpeg")
+	want := "2026/09/018f2c80-0000-7000-8000-000000000001_t.jpg"
+	if got != want {
+		t.Errorf("kunci turunan = %q, mau %q", got, want)
+	}
+
+	// Tetap satu direktori dengan aslinya — itu yang membuat pasangannya
+	// terlihat saat seseorang membuka penyimpanan.
+	if path.Dir(got) != path.Dir("2026/09/x.png") {
+		t.Errorf("turunan pindah direktori: %q", got)
+	}
+	// Dan tidak pernah bertabrakan dengan kunci aslinya.
+	if got == "2026/09/018f2c80-0000-7000-8000-000000000001.png" {
+		t.Error("kunci turunan sama dengan kunci aslinya")
+	}
+}
+
+func TestThumbStorageKeyUntukTurunanPNG(t *testing.T) {
+	got := thumbStorageKey("2026/09/abc.webp", "image/png")
+	if want := "2026/09/abc_t.png"; got != want {
+		t.Errorf("kunci turunan = %q, mau %q", got, want)
+	}
+}
+
+// Turunan dari WebP adalah PNG. Menamainya "logo.webp" berarti berbohong
+// kepada siapa pun yang menyimpannya — yang tersimpan PNG.
+func TestThumbFileNameMengikutiIsiTurunannya(t *testing.T) {
+	cases := []struct{ nama, mime, mau string }{
+		{"logo.webp", "image/png", "logo.png"},
+		{"foto.png", "image/jpeg", "foto.jpg"},
+		{"tanpa-ekstensi", "image/jpeg", "tanpa-ekstensi.jpg"},
+		{".gitignore", "image/png", "turunan.png"},
+	}
+	for _, c := range cases {
+		if got := thumbFileName(c.nama, c.mime); got != c.mau {
+			t.Errorf("thumbFileName(%q, %q) = %q, mau %q", c.nama, c.mime, got, c.mau)
+		}
 	}
 }
