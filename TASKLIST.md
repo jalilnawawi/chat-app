@@ -349,7 +349,111 @@ salah ketik berubah jadi kehilangan data.
 - **Terjemahan, pesan terjadwal, self-destruct.** Menarik, tapi tidak satu pun
   mengubah bentuk aplikasi seperti tiga fitur di atas.
 
-## Fase 10 — Kandidat berikutnya
+## Fase 10 — Kelola akun & profil
+Sampai Fase 9 sebuah akun hanya punya username, nama tampilan, dan password.
+Tidak ada cara mengubah apa pun setelah mendaftar, tidak ada email, dan tidak ada
+foto. Fase ini menutup itu.
+
+Satu keputusan menaungi seluruh fase ini, dan kalau salah akan terasa di
+mana-mana: **status BUKAN presence.**
+
+Presence (online/offline) sudah ada sejak Fase 6 — diturunkan dari koneksi yang
+hidup, disimpan di Redis dengan TTL, dan sengaja fana: instance yang mati
+tersapu sendiri. Status ("available", "busy", "sedang rapat sampai 13.00")
+adalah pernyataan yang dibuat orang dengan sengaja, dan harus bertahan melewati
+tutup laptop, ganti perangkat, dan logout.
+
+Menyatukan keduanya berarti status "busy sampai jam 1" yang baru saja seseorang
+pasang lenyap begitu dia menutup tab. Jadi presence tetap di Redis, status
+tinggal di Postgres, dan client menampilkan gabungan keduanya.
+
+### Foto profil
+- [ ] Kolom `avatar_key` di `users`; byte-nya lewat `blob.Store` seperti lampiran
+- [ ] Ukurannya diperkecil lewat paket `imaging` Fase 8 saat diunggah, dan
+      **berkas aslinya dibuang** — tidak ada yang butuh avatar dua belas
+      megapiksel, dan menyimpannya berarti membayar selamanya untuk sesuatu yang
+      selalu ditampilkan selebar 40 piksel
+- [ ] **Alamatnya harus berubah setiap fotonya berubah.**
+
+      Fase 8 memasang `Cache-Control: private, max-age=31536000, immutable` pada
+      semua isi lampiran, dan itu benar untuk byte yang memang tidak pernah
+      berubah. Avatar BERUBAH. Alamat tetap seperti `/api/users/{id}/avatar`
+      berarti browser menyimpan foto lama selama setahun dan tidak pernah lagi
+      bertanya — orang mengganti fotonya, dan tidak seorang pun melihatnya.
+
+      Jadi tiap unggahan menghasilkan id baru, persis seperti lampiran, dan
+      alamatnya ikut berubah. Dengan begitu cache setahun kembali menjadi benar,
+      bukan menjadi jebakan.
+- [ ] Izin bacanya BERBEDA dari lampiran: avatar boleh dilihat siapa pun yang
+      sudah login, karena orangnya memang sudah bisa ditemukan lewat pencarian
+      pengguna. Ditulis eksplisit supaya tidak ada yang menyalin aturan lampiran
+      ke sini dan mengira itu kebetulan lebih aman.
+- [ ] Avatar lama disapu setelah diganti, lewat penyapu yang sudah ada
+
+### Email & password
+- [ ] Kolom `email` di `users` — unik, dan boleh kosong untuk akun lama
+- [ ] Mengubah email atau password **menuntut password saat ini**, bukan sekadar
+      sesi yang masih hidup. Sesi bisa saja milik laptop yang ditinggal terbuka.
+- [ ] Verifikasi email lewat tautan bertoken, dan **email yang belum terverifikasi
+      tidak boleh dipakai memulihkan akun sama sekali** — kalau boleh, memulihkan
+      akun cuma butuh mengaku memiliki sebuah alamat
+- [ ] SMTP jadi dependensi baru, dan mengikuti pola yang sama dengan `REDIS_URL`,
+      `SEAWEED_FILER_URL`, dan kunci VAPID: `SMTP_URL` kosong berarti fitur
+      email mati dan aplikasinya tetap utuh
+- [ ] Reset password lewat email — token sekali pakai, berumur pendek, disimpan
+      sebagai hash seperti token sesi
+- [ ] **Ganti password mencabut semua sesi lain, dan benar-benar memutus
+      koneksinya.**
+
+      Menghapus baris di `sessions` saja tidak cukup. Koneksi WebSocket yang
+      sudah terlanjur terbuka dipegang di memori proses, dan sejak Fase 6 proses
+      itu bisa instance LAIN. Baris sesi hilang sementara koneksinya tetap hidup
+      berarti orang yang password-nya baru saja dicuri tetap terhubung.
+
+      Perlu satu event baru di `hub` yang menyuruh instance mana pun yang
+      memegang sesi itu menutup koneksinya — jalur yang sama dengan siaran
+      biasa, hanya arah kebalikannya.
+- [ ] Daftar sesi aktif beserta cara mencabutnya satu per satu
+
+### Status
+- [ ] Kolom `status` (`available` / `busy` / `away`), `status_text`, dan
+      `status_expires_at` di `users`
+- [ ] `status_text` dibatasi panjangnya. Ini teks bebas yang ditampilkan ke orang
+      lain, dan tanpa batas dia jadi pesan kedua yang menyamar jadi status.
+- [ ] **Durasi tidak dijaga timer di server.**
+
+      "10.00 – 13.00" disimpan sebagai `status_expires_at`, dan tidak ada job
+      yang membersihkannya. Pembacaan menyaring sendiri
+      (`CASE WHEN status_expires_at > now()`), dan client menerima `expiresAt`
+      lalu menghitung mundur sendiri.
+
+      Alasannya sama dengan typing indicator di Fase 3 yang sengaja tidak
+      menyentuh database: keadaan yang kedaluwarsa dengan sendirinya tidak
+      butuh sesuatu yang berjalan. Penyapu lintas instance justru menambah
+      masalah — butuh penguncian, dan tiap instance akan menyiarkan kabar
+      kedaluwarsa yang sama.
+- [ ] Waktunya disimpan sebagai instan absolut (`timestamptz`), dan client yang
+      merendernya ke jam lokal. "Sampai jam 13.00" di jam siapa adalah
+      pertanyaan yang harus punya jawaban sebelum baris pertama ditulis.
+- [ ] Perubahan status disiarkan ke `ContactIDs` lewat `hub.Publish` — jalur yang
+      persis sama dengan presence, jadi tidak ada mekanisme fan-out kedua
+- [ ] Snapshot status ikut dikirim saat client menyambung, seperti
+      `presence.snapshot` — tanpa itu status seseorang baru terlihat saat dia
+      kebetulan menggantinya
+- [ ] **`busy` meredam push.** Inilah yang membuat status bukan sekadar hiasan:
+      dia menyambung ke peredam dering Fase 7. Mention tetap menembus, sama
+      seperti keputusan di Fase 9.
+- [ ] UI: pemilih status, kolom teks bebas, pemilih durasi dengan pilihan cepat
+      (30 menit, 1 jam, sampai akhir hari), dan titik presence yang menampilkan
+      gabungan online + status
+
+### Verifikasi
+- [ ] Test store untuk jalur baru, di atas harness yang dibuat di Fase 9
+- [ ] Uji langsung: ganti password memutus sesi lain **di instance yang berbeda**,
+      status yang sudah lewat waktunya tidak pernah ikut terbaca, dan mengganti
+      foto benar-benar terlihat oleh orang lain tanpa menunggu cache
+
+## Fase 11 — Kandidat berikutnya
 - [ ] **Menemukan pesan**: cari, teruskan, dan pin — kelompok yang saling
       menguatkan seperti Fase 9. `pg_trgm` sudah terpasang sejak Fase 6, tapi
       untuk isi pesan `tsvector` hampir pasti pilihan yang lebih tepat daripada
@@ -375,5 +479,6 @@ tidak perlu ditemukan ulang nanti.
       tidak boleh menyentuh internet
 - [ ] Prosedur cadangan untuk Postgres DAN SeaweedFS; keduanya memegang data
       yang tidak bisa dibuat ulang
-- [ ] Reset password — sekarang orang yang lupa kehilangan akunnya selamanya
+- [ ] Reset password — **dijadwalkan di Fase 10**, bersama email yang memang jadi
+      syaratnya; sampai itu selesai, orang yang lupa kehilangan akunnya selamanya
 - [ ] Hapus akun, blokir pengguna, dan cara melaporkan penyalahgunaan
