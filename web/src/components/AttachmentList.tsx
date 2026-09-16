@@ -1,4 +1,5 @@
 import { attachmentURL } from '../api';
+import Icon from './Icon';
 import type { Attachment } from '../types';
 
 /** Ukuran berkas dalam satuan yang biasa dipakai orang, bukan byte mentah. */
@@ -64,7 +65,7 @@ export default function AttachmentList({
               href={attachmentURL(a.url)}
               target="_blank"
               rel="noreferrer"
-              className="block overflow-hidden rounded-lg"
+              className="block overflow-hidden rounded-xl"
             >
               <img
                 // Turunan bila ada, aslinya bila tidak. Foto dua belas
@@ -86,7 +87,7 @@ export default function AttachmentList({
                 // benar-benar tergulir ke layar.
                 loading="lazy"
                 decoding="async"
-                className="max-h-72 w-full bg-black/5 object-cover"
+                className="max-h-80 w-full bg-ink/5 object-cover"
               />
             </a>
           ))}
@@ -105,7 +106,7 @@ export default function AttachmentList({
             // melompat ke menit kesepuluh mengambil menit kesepuluh saja,
             // bukan sembilan menit sebelumnya.
             preload="metadata"
-            className="max-h-72 w-full rounded-lg bg-black"
+            className="max-h-80 w-full rounded-xl bg-black"
           />
         ) : (
           <audio
@@ -127,14 +128,16 @@ export default function AttachmentList({
           // Content-Disposition; yang di sini supaya klik terasa benar bahkan
           // sebelum jawaban server tiba.
           download={a.name}
-          className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition ${
-            mine ? 'bg-black/15 hover:bg-black/25' : 'bg-canvas hover:bg-line/50'
+          className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 transition ${
+            mine ? 'bg-accent-ink/15 hover:bg-accent-ink/25' : 'bg-canvas hover:bg-line'
           }`}
         >
-          <span className="text-lg leading-none">📎</span>
+          <span className={mine ? 'text-accent-ink/80' : 'text-muted'}>
+            <Icon name="klip" size={18} />
+          </span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm">{a.name}</span>
-            <span className={`block text-xs ${mine ? 'text-white/70' : 'text-muted'}`}>
+            <span className="block truncate text-sm font-medium">{a.name}</span>
+            <span className={`block text-[12px] ${mine ? 'text-accent-ink/75' : 'text-muted'}`}>
               {formatBytes(a.size)}
             </span>
           </span>

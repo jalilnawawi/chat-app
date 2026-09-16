@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { ApiError, api } from '../api';
 import { useStore } from '../store';
+import Tanda from './Tanda';
 
 /**
  * Halaman masuk, daftar, dan pemulihan akun.
@@ -88,83 +89,109 @@ export default function AuthPage({ notice }: { notice?: string | null }) {
   };
 
   return (
-    <div className="flex h-full items-center justify-center p-6">
-      <form
-        onSubmit={submit}
-        className="w-full max-w-sm rounded-2xl border border-line bg-surface p-8 shadow-sm"
-      >
-        <h1 className="text-xl font-semibold tracking-tight">{JUDUL[mode]}</h1>
-        <p className="mt-1 text-sm text-muted">{KETERANGAN[mode]}</p>
-
-        {notice && (
-          <p className="mt-4 rounded-lg bg-accent-soft px-3 py-2 text-sm">{notice}</p>
-        )}
-
-        <div className="mt-6 space-y-3">
-          {(mode === 'login' || mode === 'register') && (
-            <Field label="Username" value={username} onChange={setUsername} autoFocus />
-          )}
-          {mode === 'register' && (
-            <Field label="Nama tampilan" value={displayName} onChange={setDisplayName} />
-          )}
-          {mode === 'forgot' && (
-            <Field label="Email" value={email} onChange={setEmail} type="email" autoFocus />
-          )}
-          {mode !== 'forgot' && (
-            <Field
-              label={mode === 'reset' ? 'Password baru' : 'Password'}
-              value={password}
-              onChange={setPassword}
-              type="password"
-              autoFocus={mode === 'reset'}
-            />
-          )}
+    <div className="flex h-full items-center justify-center overflow-y-auto p-6">
+      <div className="w-full max-w-sm py-8">
+        <div className="mb-7 flex flex-col items-center gap-2.5">
+          <Tanda size={58} />
+          <p className="text-2xl font-extrabold tracking-tight">Chat</p>
         </div>
 
-        {info && (
-          <p className="mt-4 rounded-lg bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">
-            {info}
-          </p>
-        )}
-        {error && (
-          <p className="mt-4 rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">
-            {error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={busy}
-          className="mt-6 w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+        <form
+          onSubmit={submit}
+          className="rounded-[20px] border border-line bg-surface p-7 shadow-pop"
         >
-          {busy ? 'Memproses…' : TOMBOL[mode]}
-        </button>
+          <h1 className="text-xl font-bold tracking-tight">{JUDUL[mode]}</h1>
+          <p className="mt-1.5 text-sm leading-relaxed text-muted">{KETERANGAN[mode]}</p>
 
-        <div className="mt-4 flex flex-col gap-2 text-center text-sm">
-          {mode === 'login' && (
-            <>
-              <button type="button" onClick={() => pindah('register')} className={tautan}>
-                Belum punya akun? Daftar
-              </button>
-              {mail && (
-                <button type="button" onClick={() => pindah('forgot')} className={tautan}>
-                  Lupa password?
+          {notice && (
+            <p className="mt-5 rounded-xl bg-ok-soft px-3.5 py-2.5 text-sm">{notice}</p>
+          )}
+
+          <div className="mt-6 space-y-3.5">
+            {(mode === 'login' || mode === 'register') && (
+              <Field
+                label="Username"
+                value={username}
+                onChange={setUsername}
+                autoFocus
+                autoComplete="username"
+              />
+            )}
+            {mode === 'register' && (
+              <Field
+                label="Nama tampilan"
+                value={displayName}
+                onChange={setDisplayName}
+                autoComplete="name"
+              />
+            )}
+            {mode === 'forgot' && (
+              <Field
+                label="Email"
+                value={email}
+                onChange={setEmail}
+                type="email"
+                autoFocus
+                autoComplete="email"
+              />
+            )}
+            {mode !== 'forgot' && (
+              <Field
+                label={mode === 'reset' ? 'Password baru' : 'Password'}
+                value={password}
+                onChange={setPassword}
+                type="password"
+                autoFocus={mode === 'reset'}
+                // Pengelola password perlu tahu bedanya: yang satu mengisi yang
+                // sudah tersimpan, yang satu menawarkan menyimpan yang baru.
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              />
+            )}
+          </div>
+
+          {info && (
+            <p className="mt-5 rounded-xl bg-ok-soft px-3.5 py-2.5 text-sm text-ink">{info}</p>
+          )}
+          {error && (
+            <p className="mt-5 rounded-xl bg-danger-soft px-3.5 py-2.5 text-sm text-danger">
+              {error}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={busy}
+            className="mt-6 w-full rounded-xl bg-accent px-4 py-3 text-[15px] font-semibold text-accent-ink transition hover:brightness-110 active:scale-[0.99] disabled:opacity-50"
+          >
+            {busy ? 'Memproses…' : TOMBOL[mode]}
+          </button>
+
+          <div className="mt-5 flex flex-col items-center gap-2.5 text-sm">
+            {mode === 'login' && (
+              <>
+                <button type="button" onClick={() => pindah('register')} className={tautan}>
+                  Belum punya akun? Daftar
                 </button>
-              )}
-            </>
-          )}
-          {mode !== 'login' && (
-            <button type="button" onClick={() => pindah('login')} className={tautan}>
-              {mode === 'register' ? 'Sudah punya akun? Masuk' : 'Kembali ke halaman masuk'}
-            </button>
-          )}
-        </div>
-      </form>
+                {mail && (
+                  <button type="button" onClick={() => pindah('forgot')} className={tautan}>
+                    Lupa password?
+                  </button>
+                )}
+              </>
+            )}
+            {mode !== 'login' && (
+              <button type="button" onClick={() => pindah('login')} className={tautan}>
+                {mode === 'register' ? 'Sudah punya akun? Masuk' : 'Kembali ke halaman masuk'}
+              </button>
+            )}
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
 
-const tautan = 'text-muted transition hover:text-ink';
+const tautan = 'rounded text-muted underline-offset-4 transition hover:text-ink hover:underline';
 
 const JUDUL: Record<Mode, string> = {
   login: 'Masuk',
@@ -197,22 +224,25 @@ function Field({
   onChange,
   type = 'text',
   autoFocus,
+  autoComplete,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   type?: string;
   autoFocus?: boolean;
+  autoComplete?: string;
 }) {
   return (
     <label className="block">
-      <span className="text-xs font-medium text-muted">{label}</span>
+      <span className="text-[13px] font-semibold text-muted">{label}</span>
       <input
         type={type}
         value={value}
         autoFocus={autoFocus}
+        autoComplete={autoComplete}
         onChange={e => onChange(e.target.value)}
-        className="mt-1 w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm outline-none transition focus:border-accent"
+        className="mt-1.5 w-full rounded-xl border border-line-strong bg-canvas px-3.5 py-2.5 text-[15px] outline-none transition focus:bg-surface"
       />
     </label>
   );

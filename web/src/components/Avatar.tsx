@@ -13,18 +13,36 @@ export default function Avatar({
   name,
   url,
   size = 36,
+  grup = false,
   dot,
 }: {
   name: string;
   url?: string;
   size?: number;
+  /**
+   * Grup digambar sebagai persegi membulat, orang sebagai lingkaran.
+   *
+   * Bentuk, bukan warna atau ikon kecil di pojok: bentuk terbaca dari sudut
+   * mata, pada ukuran berapa pun, dan tidak menuntut orang menghafal arti
+   * sebuah lambang lebih dulu.
+   */
+  grup?: boolean;
   /** Titik keadaan di pojok kanan bawah; tidak digambar bila undefined. */
   dot?: DotKind;
 }) {
+  const rona = ronaDari(name);
+  const bentuk = grup ? 'rounded-[30%]' : 'rounded-full';
+
   return (
     <span
-      className="relative inline-grid shrink-0 place-items-center overflow-visible rounded-full bg-canvas font-medium"
-      style={{ width: size, height: size, fontSize: Math.round(size * 0.4) }}
+      className={`relative inline-grid shrink-0 place-items-center font-bold ${bentuk}`}
+      style={{
+        width: size,
+        height: size,
+        fontSize: Math.round(size * 0.4),
+        background: `oklch(var(--avatar-l) var(--avatar-c) ${rona})`,
+        color: `oklch(var(--avatar-ink-l) var(--avatar-ink-c) ${rona})`,
+      }}
     >
       {url ? (
         <img
@@ -34,7 +52,7 @@ export default function Avatar({
           // itu yang membuat `loading="lazy"` dan cache setahun di sisi server
           // aman dipakai bersamaan: tidak ada alamat yang isinya pernah basi.
           loading="lazy"
-          className="size-full rounded-full object-cover"
+          className={`size-full object-cover ${bentuk}`}
         />
       ) : (
         <span aria-hidden>{name.charAt(0).toUpperCase()}</span>
@@ -44,19 +62,39 @@ export default function Avatar({
         <span
           title={dotTitles[dot]}
           className={`absolute right-0 bottom-0 rounded-full border-2 border-surface ${dotColors[dot]}`}
-          style={{ width: Math.max(8, size * 0.28), height: Math.max(8, size * 0.28) }}
+          style={{ width: Math.max(9, size * 0.28), height: Math.max(9, size * 0.28) }}
         />
       )}
     </span>
   );
 }
 
+/**
+ * Rona tetap untuk sebuah nama.
+ *
+ * Tujuh rona yang sudah dipilih agar rukun dengan palet, bukan nilai acak dari
+ * seluruh lingkaran warna — yang terakhir itu cepat atau lambat menghasilkan
+ * lingkaran yang berkelahi dengan teal di sebelahnya.
+ *
+ * Gunanya bukan hiasan: di grup berisi belasan orang tanpa foto, warna adalah
+ * hal pertama yang dikenali mata sebelum hurufnya sempat dibaca. Karena
+ * dihitung dari nama, orang yang sama selalu mendapat warna yang sama di setiap
+ * perangkat, tanpa sekali pun perlu disimpan.
+ */
+const RONA = [196, 72, 152, 25, 285, 330, 248];
+
+function ronaDari(name: string): number {
+  let jumlah = 0;
+  for (let i = 0; i < name.length; i++) jumlah = (jumlah * 31 + name.charCodeAt(i)) % 100003;
+  return RONA[jumlah % RONA.length]!;
+}
+
 export type DotKind = 'online' | 'busy' | 'away';
 
 const dotColors: Record<DotKind, string> = {
-  online: 'bg-emerald-500',
-  busy: 'bg-red-500',
-  away: 'bg-amber-500',
+  online: 'bg-ok',
+  busy: 'bg-danger',
+  away: 'bg-call',
 };
 
 const dotTitles: Record<DotKind, string> = {

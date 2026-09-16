@@ -101,6 +101,8 @@ type State = {
 
   loadConversations: () => Promise<void>;
   openConversation: (id: string) => Promise<void>;
+  /** Melepas percakapan yang sedang dibuka; di layar sempit inilah "kembali". */
+  closeConversation: () => void;
   loadOlder: (id: string) => Promise<void>;
 
   sendMessage: (conversationId: string, body: string) => Promise<void>;
@@ -332,6 +334,17 @@ export const useStore = create<State>((set, get) => ({
 
     get().markReadUpTo(id);
   },
+
+  /**
+   * Hanya melepas penunjuknya — riwayat, anggota, dan draf unggahan dibiarkan
+   * utuh di tempatnya.
+   *
+   * Di layar lebar tombolnya memang tidak ada: daftar dan percakapan tampil
+   * bersebelahan, dan "menutup" akan menyisakan panel kosong tanpa alasan. Yang
+   * membutuhkannya adalah layar sempit, tempat keduanya bergantian mengisi satu
+   * kolom yang sama.
+   */
+  closeConversation: () => set({ activeId: null }),
 
   loadOlder: async id => {
     const list = get().messages[id] ?? [];

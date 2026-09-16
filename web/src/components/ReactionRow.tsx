@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
+import Icon from './Icon';
 import type { Message } from '../types';
 
 /**
@@ -45,7 +46,7 @@ export default function ReactionRow({ message, mine }: { message: Message; mine:
   return (
     <div
       ref={boxRef}
-      className={`relative mt-1 flex flex-wrap items-center gap-1 ${
+      className={`relative mt-1.5 flex flex-wrap items-center gap-1 ${
         mine ? 'justify-end' : 'justify-start'
       }`}
     >
@@ -58,10 +59,10 @@ export default function ReactionRow({ message, mine }: { message: Message; mine:
               ? `Kamu${r.count > 1 ? ` dan ${r.count - 1} lainnya` : ''} — klik untuk melepas`
               : `${r.count} orang`
           }
-          className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition ${
+          className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[13px] transition ${
             r.mine
-              ? 'border-accent bg-accent-soft text-ink'
-              : 'border-line bg-surface text-muted hover:border-accent'
+              ? 'border-accent bg-accent-soft font-bold text-accent-text'
+              : 'border-line bg-surface text-muted hover:border-accent hover:text-ink'
           }`}
         >
           <span>{r.emoji}</span>
@@ -81,16 +82,16 @@ export default function ReactionRow({ message, mine }: { message: Message; mine:
         onClick={() => setPicking(v => !v)}
         aria-label="Beri reaksi"
         title="Beri reaksi"
-        className={`rounded-full border border-line bg-surface px-1.5 py-0.5 text-xs text-muted transition hover:border-accent hover:text-ink ${
-          picking ? '' : 'hidden group-hover:block [@media(hover:none)]:block'
+        className={`grid size-6 place-items-center rounded-full border border-line bg-surface text-muted transition hover:border-accent hover:text-accent-text ${
+          picking ? '' : 'hidden group-hover:grid [@media(hover:none)]:grid'
         }`}
       >
-        ＋
+        <Icon name="reaksi" size={14} />
       </button>
 
       {picking && (
         <div
-          className={`absolute bottom-full z-20 mb-1 flex gap-0.5 rounded-xl border border-line bg-surface p-1 shadow-lg ${
+          className={`absolute bottom-full z-20 mb-1.5 flex gap-0.5 rounded-2xl border border-line bg-surface p-1.5 shadow-pop ${
             mine ? 'right-0' : 'left-0'
           }`}
         >
@@ -98,7 +99,10 @@ export default function ReactionRow({ message, mine }: { message: Message; mine:
             <button
               key={emoji}
               onClick={() => pick(emoji)}
-              className="rounded-lg px-1.5 py-1 text-base transition hover:bg-canvas"
+              // Sasaran sentuh yang cukup besar: barisan delapan emoji yang
+              // masing-masing selebar emojinya saja adalah delapan tombol yang
+              // saling bersebelahan terlalu rapat untuk ibu jari.
+              className="grid size-9 place-items-center rounded-xl text-lg transition hover:bg-accent-soft"
             >
               {emoji}
             </button>

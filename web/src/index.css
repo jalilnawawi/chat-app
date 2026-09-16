@@ -1,35 +1,199 @@
 @import 'tailwindcss';
+/* Hanya varian tegak. Miringnya tidak dipakai di mana pun, dan berkas yang
+   tidak pernah dipakai tetap ikut terunduh kalau diimpor. */
+@import '@fontsource-variable/plus-jakarta-sans/wght.css';
 
+/**
+ * Palet: pagi di tepi air.
+ *
+ * Teal lagoon untuk suara sendiri, mangga untuk panggilan, kertas putih yang
+ * disemburati mint supaya layar tidak terasa seperti dokumen kantor. Warnanya
+ * dipilih setelah rasio kontrasnya dihitung, bukan sebaliknya — aplikasi ini
+ * dipakai lintas umur, dan teks yang harus dikira-kira adalah teks yang gagal.
+ *
+ * Setiap nada punya SATU pekerjaan. Mangga tidak pernah muncul sebagai hiasan;
+ * kalau dia ada di layar, artinya ada yang memanggil namamu. Isyarat yang
+ * dipakai untuk dua hal berhenti jadi isyarat.
+ */
 @theme {
-  --color-canvas: oklch(0.985 0.003 90);
+  --font-sans:
+    'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* Lengkung gelembung. Satu angka, dipakai bersama oleh empat sudut yang
+     berbeda-beda nasibnya — lihat MessageBubble. */
+  --radius-bubble: 1.125rem;
+
+  --color-canvas: oklch(0.966 0.018 192);
   --color-surface: oklch(1 0 0);
-  --color-line: oklch(0.91 0.005 90);
-  --color-ink: oklch(0.25 0.01 90);
-  --color-muted: oklch(0.55 0.01 90);
-  --color-accent: oklch(0.58 0.15 250);
-  --color-accent-soft: oklch(0.95 0.03 250);
+  --color-line: oklch(0.905 0.014 200);
+  /* Garis yang MEMBATASI sesuatu yang bisa ditekan atau diketik, bukan yang
+     sekadar memisahkan. Cukup gelap untuk terlihat tanpa harus dicari. */
+  --color-line-strong: oklch(0.62 0.025 205);
+  --color-ink: oklch(0.28 0.03 225);
+  --color-muted: oklch(0.525 0.025 222);
+
+  --color-accent: oklch(0.545 0.11 196);
+  --color-accent-ink: oklch(1 0 0);
+  --color-accent-soft: oklch(0.945 0.03 196);
+  /* Teal untuk TEKS berdiri sendiri: yang dipakai mengisi bidang terlalu terang
+     untuk dibaca sebagai huruf kecil di atas kertas. */
+  --color-accent-text: oklch(0.505 0.105 196);
+
+  --color-call: oklch(0.78 0.15 72);
+  --color-call-soft: oklch(0.945 0.045 80);
+  --color-call-ink: oklch(0.38 0.1 62);
+
+  --color-danger: oklch(0.52 0.19 25);
+  --color-danger-soft: oklch(0.955 0.025 25);
+  --color-ok: oklch(0.5 0.13 155);
+  --color-ok-soft: oklch(0.95 0.04 155);
+
+  --shadow-pop: 0 12px 32px -12px oklch(0.28 0.03 225 / 0.28);
 }
 
-@media (prefers-color-scheme: dark) {
-  @theme {
-    --color-canvas: oklch(0.18 0.008 260);
-    --color-surface: oklch(0.22 0.01 260);
-    --color-line: oklch(0.3 0.012 260);
-    --color-ink: oklch(0.94 0.005 260);
-    --color-muted: oklch(0.65 0.01 260);
-    --color-accent: oklch(0.68 0.14 250);
-    --color-accent-soft: oklch(0.3 0.05 250);
-  }
+/**
+ * Warna avatar cadangan.
+ *
+ * Bukan tujuh warna tetap, melainkan satu terang dan satu gelap untuk RONA yang
+ * dihitung dari namanya — lihat Avatar.tsx. Nilainya duduk di sini, bukan di
+ * komponen, supaya lingkaran yang sama ikut redup saat temanya gelap alih-alih
+ * menyala seperti lampu kecil di tengah layar malam.
+ */
+:root {
+  --avatar-l: 0.9;
+  --avatar-c: 0.055;
+  --avatar-ink-l: 0.35;
+  --avatar-ink-c: 0.09;
+}
+
+/**
+ * Gelap bukan versi terang yang dibalik.
+ *
+ * Yang diganti hanya nilai variabelnya, bukan aturannya — jadi tidak ada satu
+ * pun utilitas di seluruh aplikasi yang perlu menulis varian `dark:`. Peran tiap
+ * nada tetap sama; yang berubah cuma dari mana cahayanya datang.
+ *
+ * Dipilih oleh ATRIBUT, bukan oleh media query, walau sebagian besar orang tidak
+ * akan pernah memilih apa pun. Alasannya: dengan media query, palet gelap harus
+ * ditulis DUA KALI — sekali untuk yang mengikuti sistem, sekali lagi untuk yang
+ * memaksanya — dan dua salinan satu palet adalah dua salinan yang suatu hari
+ * berbeda. Yang menerjemahkan "ikut sistem" jadi salah satu dari dua nilai di
+ * sini adalah tema.ts, sebelum React sempat menggambar apa pun.
+ */
+:root[data-tema='gelap'] {
+  --color-canvas: oklch(0.185 0.018 228);
+  --color-surface: oklch(0.232 0.02 228);
+  --color-line: oklch(0.315 0.022 228);
+  --color-line-strong: oklch(0.52 0.026 228);
+  --color-ink: oklch(0.95 0.008 210);
+  --color-muted: oklch(0.72 0.02 220);
+
+  --color-accent: oklch(0.545 0.105 196);
+  --color-accent-ink: oklch(1 0 0);
+  --color-accent-soft: oklch(0.3 0.045 200);
+  --color-accent-text: oklch(0.8 0.09 196);
+
+  --color-call: oklch(0.8 0.145 72);
+  --color-call-soft: oklch(0.33 0.055 70);
+  --color-call-ink: oklch(0.38 0.1 62);
+
+  --color-danger: oklch(0.7 0.16 25);
+  --color-danger-soft: oklch(0.3 0.07 25);
+  --color-ok: oklch(0.78 0.13 160);
+  --color-ok-soft: oklch(0.3 0.06 160);
+
+  --shadow-pop: 0 12px 32px -12px oklch(0 0 0 / 0.55);
+
+  --avatar-l: 0.42;
+  --avatar-c: 0.07;
+  --avatar-ink-l: 0.93;
+  --avatar-ink-c: 0.03;
 }
 
 html,
-body,
-#root {
+body {
   height: 100%;
+}
+
+#root {
+  /* dvh, bukan %: bilah alamat ponsel yang menyusut saat digulir akan memotong
+     kolom tulis kalau tingginya diukur dari viewport yang tidak ikut berubah. */
+  height: 100dvh;
 }
 
 body {
   background: var(--color-canvas);
   color: var(--color-ink);
-  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: var(--font-sans);
+  /* Dasarnya 15px, bukan 14px. Satu piksel ini yang membedakan "bisa dibaca"
+     dari "bisa dibaca sambil menyipit" bagi sebagian besar pemakainya. */
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Satu cincin fokus untuk seluruh aplikasi, dan hanya untuk yang berpindah
+   lewat papan ketik. Tanpa ini, orang yang tidak memakai tetikus kehilangan
+   jejak posisinya begitu meninggalkan kolom tulis. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--color-accent-soft);
+  color: var(--color-ink);
+}
+
+/* Bilah gulir yang tidak ikut menuntut perhatian. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+
+/**
+ * Tiga titik "sedang mengetik".
+ *
+ * Satu-satunya gerak di aplikasi ini yang TIDAK dipicu orang, dan dia boleh ada
+ * karena dia bukan hiasan: dia satu-satunya cara mengatakan bahwa ada yang
+ * sedang menulis di seberang sana.
+ */
+@keyframes denyut {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+.denyut > span {
+  animation: denyut 1.2s infinite;
+}
+.denyut > span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.denyut > span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  /* Titiknya tetap harus terlihat walau tidak bergerak — yang diminta orang
+     adalah gerakannya berhenti, bukan kabarnya hilang. */
+  .denyut > span {
+    opacity: 0.7;
+  }
 }

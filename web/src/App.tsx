@@ -2,15 +2,19 @@ import { useEffect, useState } from 'react';
 import { api } from './api';
 import { registerServiceWorker } from './push';
 import { useStore } from './store';
+import { pantauSistem } from './tema';
 import { useSocket } from './useSocket';
 import AuthPage from './components/AuthPage';
 import Sidebar from './components/Sidebar';
 import ChatPanel from './components/ChatPanel';
 import AccountPanel from './components/AccountPanel';
+import Icon from './components/Icon';
+import Tanda from './components/Tanda';
 
 export default function App() {
   const me = useStore(s => s.me);
   const setMe = useStore(s => s.setMe);
+  const activeId = useStore(s => s.activeId);
   const loadConfig = useStore(s => s.loadConfig);
   const loadConversations = useStore(s => s.loadConversations);
   const [checking, setChecking] = useState(true);
@@ -38,6 +42,12 @@ export default function App() {
       .then(got => setVerified(`Alamat ${got.email} terverifikasi.`))
       .catch(err => setVerified(err instanceof Error ? err.message : 'Verifikasi gagal.'));
   }, []);
+
+  // Pemantau tema dipasang untuk SELURUH aplikasi, bukan di dalam panel akun
+  // tempat saklarnya berada: ponsel yang dijadwalkan masuk mode malam berganti
+  // sendiri pada jam tertentu, dan panel itu hampir selalu tertutup saat jam itu
+  // tiba. Yang dipantau bukan saklarnya, melainkan sistemnya.
+  useEffect(() => pantauSistem(), []);
 
   // Kemampuan server ditanyakan SEKALI, dan tidak menunggu sesi: halaman masuk
   // sudah membutuhkannya untuk memutuskan apakah "Lupa password?" pantas
@@ -106,28 +116,46 @@ export default function App() {
 
   if (checking) {
     return (
-      <div className="flex h-full items-center justify-center text-muted">Memuat…</div>
+      <div className="flex h-full flex-col items-center justify-center gap-3">
+        <Tanda />
+        <p className="text-sm text-muted">Memuat…</p>
+      </div>
     );
   }
 
   if (!me) return <AuthPage notice={verified} />;
 
   return (
-    <div className="mx-auto flex h-full max-w-6xl flex-col overflow-hidden border-line sm:border-x">
+    <div className="mx-auto flex h-full max-w-[1480px] flex-col overflow-hidden border-line lg:border-x">
       {verified && (
-        <p className="flex items-center justify-between gap-3 border-b border-line bg-accent-soft px-4 py-2 text-sm">
+        <p className="flex items-center justify-between gap-3 border-b border-line bg-ok-soft px-4 py-2.5 text-sm text-ink">
           {verified}
           <button
             onClick={() => setVerified(null)}
             aria-label="Tutup kabar"
-            className="shrink-0 rounded px-1.5 text-muted transition hover:text-ink"
+            className="grid size-7 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface hover:text-ink"
           >
-            ✕
+            <Icon name="tutup" size={16} />
           </button>
         </p>
       )}
+      {/*
+        Di layar sempit, daftar percakapan dan isi percakapan BERGANTIAN mengisi
+        satu kolom yang sama — bukan berbagi lebar yang tidak cukup untuk
+        keduanya. Sebelumnya sidebar 288px tetap berdiri di layar 360px dan
+        menyisakan 72px untuk gelembung pesan, yang artinya aplikasi ini tidak
+        bisa dipakai di benda yang paling sering dipakai membukanya.
+
+        Yang menentukan siapa yang tampil adalah activeId, bukan state tampilan
+        tersendiri: keduanya akan selalu berbeda pada akhirnya, dan yang kalah
+        adalah tombol kembali yang tidak mengembalikan apa-apa.
+      */}
       <div className="flex min-h-0 flex-1">
-        <Sidebar accountOpen={accountOpen} onToggleAccount={() => setAccountOpen(v => !v)} />
+        <Sidebar
+          hiddenOnMobile={activeId !== null}
+          accountOpen={accountOpen}
+          onToggleAccount={() => setAccountOpen(v => !v)}
+        />
         <ChatPanel send={socket.send} />
         {accountOpen && <AccountPanel onClose={() => setAccountOpen(false)} />}
       </div>
