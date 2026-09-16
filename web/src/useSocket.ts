@@ -59,7 +59,21 @@ export function useSocket(enabled: boolean) {
         plannedRestart.current = false;
         store().setConnected(true);
         // Susulkan apa pun yang terlewat selama koneksi putus.
-        ws.send(JSON.stringify({ type: 'sync', payload: { cursors: store().syncCursors() } }));
+        //
+        // DUA cursor, pada dua jam yang berbeda. `cursors` menjawab "pesan apa
+        // yang belum kupunya"; `reactionCursors` menjawab "reaksi apa yang
+        // berubah pada pesan yang SUDAH kupunya". Yang kedua tidak muat di
+        // yang pertama: reaksi menempel pada pesan lama, yang seq-nya sudah
+        // lama berhenti bergerak.
+        ws.send(
+          JSON.stringify({
+            type: 'sync',
+            payload: {
+              cursors: store().syncCursors(),
+              reactionCursors: store().reactionCursors(),
+            },
+          }),
+        );
       };
 
       ws.onmessage = e => {
@@ -83,6 +97,20 @@ export function useSocket(enabled: boolean) {
             if (ev.payload.conversationId === s.activeId) {
               s.markReadUpTo(ev.payload.conversationId);
             }
+            break;
+          case 'reaction.added':
+          case 'reaction.removed':
+            s.applyReaction(
+              ev.payload.conversationId,
+              ev.payload.messageId,
+              ev.payload.userId,
+              ev.payload.emoji,
+              ev.type === 'reaction.added',
+              ev.payload.reactionSeq,
+            );
+            break;
+          case 'reaction.batch':
+            s.applyReactionBatch(ev.payload.conversationId, ev.payload.messages);
             break;
           case 'conversation.new':
             s.applyConversation(ev.payload);

@@ -71,6 +71,20 @@ type Notification struct {
 	MessageID      uuid.UUID
 	Title          string
 	Body           string
+
+	// Mentioned adalah bagian dari Recipients yang namanya benar-benar disebut
+	// di pesan ini — dan mereka MENEMBUS peredam dering.
+	//
+	// Inilah yang membuat sebutan layak digabung dengan push yang sudah ada,
+	// bukan jadi fitur tampilan belaka. Peredam di bawah ada karena dua puluh
+	// pesan beruntun adalah satu kabar; tapi pesan yang menyebut nama seseorang
+	// bukan lagi bagian dari obrolan yang mengalir, dia adalah panggilan. Orang
+	// yang namanya dipanggil di tengah percakapan ramai justru yang paling
+	// mungkin kehilangan kabarnya kalau peredamnya ikut berlaku.
+	//
+	// Batas atasnya tetap ada di tempat lain: berapa sering seseorang boleh
+	// mengirim pesan, dan berapa sering @semua boleh dipakai.
+	Mentioned []uuid.UUID
 }
 
 type Dispatcher struct {
@@ -242,10 +256,25 @@ func (d *Dispatcher) awake(ctx context.Context, n Notification) ([]uuid.UUID, er
 		connected[id] = struct{}{}
 	}
 
+	mentioned := make(map[uuid.UUID]struct{}, len(n.Mentioned))
+	for _, id := range n.Mentioned {
+		mentioned[id] = struct{}{}
+	}
+
 	out := make([]uuid.UUID, 0, len(n.Recipients))
 	for _, id := range n.Recipients {
 		if _, ok := connected[id]; ok {
 			d.m.PushSkipped.WithLabelValues("online").Inc()
+			continue
+		}
+
+		// Yang namanya disebut menembus peredam. Perhatikan bahwa dia tetap
+		// tidak menembus pemeriksaan "sedang online" di atas: orang yang tabnya
+		// terbuka di sebelah sudah melihat sebutan itu di layarnya, dan
+		// membunyikan ponselnya juga adalah memberi tahu dua kali.
+		if _, ok := mentioned[id]; ok {
+			d.m.PushMentionBypass.Inc()
+			out = append(out, id)
 			continue
 		}
 

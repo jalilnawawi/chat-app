@@ -1,5 +1,21 @@
 import type { Attachment, Conversation, Member, Message, PushConfig, User } from './types';
 
+/**
+ * Bagian pesan yang bukan teks maupun lampiran.
+ *
+ * `mentionedUserIds` dikirim EKSPLISIT dan tidak diurai server dari "@nama".
+ * Nama tampilan boleh mengandung spasi, tapi alasan utamanya bukan itu: siapa
+ * yang dibangunkan tidak boleh ditentukan oleh cara sebuah string kebetulan
+ * ditulis. Server tetap memeriksa tiap id — client tidak pernah dipercaya soal
+ * siapa yang berhak dibangunkan.
+ */
+export type SendExtras = {
+  attachmentIds?: string[];
+  replyToId?: string;
+  mentionedUserIds?: string[];
+  mentionsAll?: boolean;
+};
+
 // Kosong = satu origin dengan halaman (dev memakai proxy Vite, produksi
 // memakai reverse proxy). Isi VITE_API_URL hanya kalau backend memang berada di
 // origin lain — dan ingat konsekuensinya: cookie sesi jadi lintas site.
@@ -94,8 +110,15 @@ export const api = {
     ),
 
   /** id dibuat di client supaya pengiriman ulang tidak menghasilkan duplikat. */
-  sendMessage: (conversationId: string, id: string, body: string, attachmentIds: string[] = []) =>
-    post<Message>(`/api/conversations/${conversationId}/messages`, { id, body, attachmentIds }),
+  sendMessage: (conversationId: string, id: string, body: string, extras: SendExtras = {}) =>
+    post<Message>(`/api/conversations/${conversationId}/messages`, {
+      id,
+      body,
+      attachmentIds: extras.attachmentIds ?? [],
+      replyToId: extras.replyToId ?? null,
+      mentionedUserIds: extras.mentionedUserIds ?? [],
+      mentionsAll: extras.mentionsAll ?? false,
+    }),
 
   /**
    * Mengunggah satu berkas, dengan laporan kemajuan.
@@ -173,4 +196,39 @@ export const api = {
 
   markRead: (conversationId: string, seq: number) =>
     post<{ lastReadSeq: number }>(`/api/conversations/${conversationId}/read`, { seq }),
+
+  /**
+   * Menurunkan penanda "ada yang menyebut kamu".
+   *
+   * Endpoint terpisah dari markRead, dan itu seluruh gunanya: terbaca bergerak
+   * saat percakapannya dibuka, sebutan baru bergerak setelah pesan yang
+   * memanggil namanya benar-benar terlihat di layar.
+   */
+  ackMentions: (conversationId: string, seq: number) =>
+    post<{ mentionAckSeq: number }>(`/api/conversations/${conversationId}/mentions/ack`, { seq }),
+
+  addReaction: (messageId: string, emoji: string) =>
+    post<ReactionResult>(`/api/messages/${messageId}/reactions`, { emoji }),
+
+  removeReaction: (messageId: string, emoji: string) =>
+    request<ReactionResult>(`/api/messages/${messageId}/reactions`, {
+      method: 'DELETE',
+      body: JSON.stringify({ emoji }),
+    }),
+};
+
+/**
+ * Jawaban atas satu penekanan reaksi.
+ *
+ * `changed: false` berarti keadaannya memang sudah begitu — emoji yang sama
+ * ditekan dua kali karena jaringan lambat. `reactionSeq` adalah nomor jam
+ * perubahan itu, dan dialah yang membuat satu perubahan tidak pernah terpasang
+ * dua kali walau datang lewat dua jalan sekaligus (jawaban ini dan siaran
+ * WebSocket).
+ */
+export type ReactionResult = {
+  messageId: string;
+  emoji: string;
+  changed: boolean;
+  reactionSeq: number;
 };

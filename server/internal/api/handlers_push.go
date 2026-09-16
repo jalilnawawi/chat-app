@@ -130,7 +130,41 @@ func (s *Server) notifyOffline(r *http.Request, msg store.Message, sender store.
 		MessageID:      msg.ID,
 		Title:          title,
 		Body:           body,
+		Mentioned:      mentionedAmong(msg, recipients),
 	})
+}
+
+// mentionedAmong menentukan siapa di antara penerima yang namanya disebut —
+// merekalah yang menembus peredam dering.
+//
+// @semua diterjemahkan jadi "semua penerima" DI SINI, bukan saat disimpan.
+// Alasannya sama dengan kenapa mentions_all jadi kolom tersendiri di database:
+// keanggotaan grup berubah, dan pesan lama harus tetap berarti "semua orang",
+// bukan "semua orang yang kebetulan ada di sana waktu itu".
+func mentionedAmong(msg store.Message, recipients []uuid.UUID) []uuid.UUID {
+	if msg.MentionsAll {
+		return recipients
+	}
+	if len(msg.Mentions) == 0 {
+		return nil
+	}
+
+	named := make(map[uuid.UUID]struct{}, len(msg.Mentions))
+	for _, id := range msg.Mentions {
+		named[id] = struct{}{}
+	}
+
+	// Disaring terhadap daftar penerima, bukan dipakai apa adanya: sebutan
+	// sudah divalidasi saat pesannya masuk, tapi keanggotaan bisa berubah di
+	// antara dua momen itu, dan yang membangunkan orang tidak boleh berjalan di
+	// atas daftar yang lebih longgar dari daftar penerimanya sendiri.
+	out := make([]uuid.UUID, 0, len(msg.Mentions))
+	for _, id := range recipients {
+		if _, ok := named[id]; ok {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // notificationText menyusun kalimat yang muncul di layar kunci.

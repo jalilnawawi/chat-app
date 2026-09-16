@@ -36,6 +36,23 @@ const (
 	EventPresenceSnapshot = "presence.snapshot"
 	EventError            = "error"
 
+	// Dua event untuk satu tombol, karena keduanya membawa SATU perubahan:
+	// siapa, emoji apa, pada pesan mana.
+	//
+	// Yang disiarkan sengaja bukan ringkasan jadi ("👍 3"), melainkan
+	// perubahannya. Ringkasan mengandung "apakah AKU ikut", dan siaran adalah
+	// satu payload yang sama untuk semua orang — memasukkan jawaban yang
+	// berbeda per pembaca ke dalamnya berarti mengirim jawaban milik orang lain
+	// ke setiap orang. Client menerapkan selisihnya pada hitungan yang sudah
+	// dia punya.
+	EventReactionAdded   = "reaction.added"
+	EventReactionRemoved = "reaction.removed"
+
+	// EventReactionBatch adalah jalur menyusul setelah reconnect, dan ini
+	// dikirim ke SATU koneksi — jadi ringkasan lengkap beserta "apakah aku
+	// ikut" memang boleh ada di sini. Lihat store/reactions.go.
+	EventReactionBatch = "reaction.batch"
+
 	// EventServerShutdown dikirim tepat sebelum instance menutup koneksi saat
 	// rolling deploy. Client memakainya untuk membedakan "server pamit, sambung
 	// lagi sekarang dengan jitter" dari "jaringan putus, mundur perlahan".

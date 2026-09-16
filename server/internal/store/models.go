@@ -23,6 +23,77 @@ type Message struct {
 	CreatedAt      time.Time    `json:"createdAt"`
 	EditedAt       *time.Time   `json:"editedAt"`
 	DeletedAt      *time.Time   `json:"deletedAt"`
+
+	// ReplyTo nil berarti pesan ini tidak membalas apa pun. Isinya dibaca ulang
+	// dari barisnya sendiri setiap kali riwayat dimuat — lihat ReplyPreview.
+	ReplyTo *ReplyPreview `json:"replyTo,omitempty"`
+
+	// Mentions adalah id yang disebut, sudah lolos pemeriksaan keanggotaan di
+	// server. Client memakainya untuk menyorot namanya sendiri; dia TIDAK
+	// dipakai untuk menentukan siapa yang dibangunkan — itu sudah diputuskan
+	// saat pesannya masuk.
+	Mentions    []uuid.UUID `json:"mentions"`
+	MentionsAll bool        `json:"mentionsAll"`
+
+	// Reactions adalah ringkasan per emoji, dan isinya BERGANTUNG PADA SIAPA
+	// YANG MEMBACA (lihat ReactionSummary.Mine). Karena itu dia hanya pernah
+	// diisi pada jalur yang tahu pembacanya — riwayat REST dan susulan resume —
+	// dan tidak pernah pada siaran yang satu payload untuk semua orang.
+	Reactions []ReactionSummary `json:"reactions"`
+
+	// ReactionSeq adalah nilai jam reaksi percakapan saat terakhir kali reaksi
+	// pesan ini berubah. Nol berarti belum pernah ada yang bereaksi. Client
+	// menyimpan nilai terbesar yang pernah dilihatnya sebagai cursor resume
+	// kedua, di samping `seq`.
+	ReactionSeq int64 `json:"reactionSeq"`
+}
+
+// ReplyPreview adalah secuil pesan yang dibalas, secukupnya untuk gelembung
+// kutipan — dan sengaja TIDAK disalin ke baris pembalasnya.
+//
+// Ini berbeda dari keputusan lampiran di Fase 7, dan perbedaannya disengaja:
+// salinan lampiran boleh ada karena lampiran tidak pernah berubah setelah
+// terpasang. Isi pesan berubah — diedit dan dihapus — jadi salinannya pasti
+// basi. Yang dibaca di sini selalu keadaan terbaru, lewat satu self-join per
+// halaman riwayat pada primary key.
+type ReplyPreview struct {
+	ID       uuid.UUID `json:"id"`
+	Seq      int64     `json:"seq"`
+	SenderID uuid.UUID `json:"senderId"`
+	Body     string    `json:"body"`
+
+	// Deleted true berarti pesan yang dikutip sudah dihapus. Kutipannya tetap
+	// tampil sebagai "pesan dihapus", bukan menghilang: gelembung balasan yang
+	// tiba-tiba kehilangan konteksnya lebih membingungkan daripada kutipan yang
+	// jujur mengatakan isinya sudah tidak ada.
+	Deleted bool `json:"deleted"`
+
+	// Kind memberi client satu kata untuk pesan yang isinya hanya lampiran —
+	// kutipan kosong terbaca sebagai pesan kosong. "image", "video", "audio",
+	// "file", atau kosong untuk pesan teks biasa.
+	Kind string `json:"kind,omitempty"`
+}
+
+// ReactionSummary adalah satu emoji pada satu pesan, sudah dihitung.
+//
+// Yang dikirim adalah JUMLAH, bukan daftar orangnya. Sebuah grup dua ratus
+// orang yang semuanya menekan emoji yang sama akan menghasilkan dua ratus id
+// yang tidak satu pun ditampilkan — dan riwayat yang memuatnya di setiap
+// pesan membayar itu untuk seluruh halaman.
+type ReactionSummary struct {
+	Emoji string `json:"emoji"`
+	Count int    `json:"count"`
+	// Mine: apakah PEMBACA ikut memberi emoji ini. Inilah yang membuat
+	// ringkasan ini tidak pernah boleh ikut di jalur siaran bersama.
+	Mine bool `json:"mine"`
+}
+
+// MessageReactions adalah keadaan reaksi satu pesan pada satu titik waktu —
+// bentuk yang dikirim saat menyusul setelah reconnect.
+type MessageReactions struct {
+	MessageID   uuid.UUID         `json:"messageId"`
+	ReactionSeq int64             `json:"reactionSeq"`
+	Reactions   []ReactionSummary `json:"reactions"`
 }
 
 // Attachment adalah bentuk lampiran yang dilihat client — dan sekaligus bentuk
@@ -104,4 +175,11 @@ type Conversation struct {
 	Peer        *User     `json:"peer"`
 	LastMessage *Message  `json:"lastMessage"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+
+	// MentionSeq > MentionAckSeq berarti ada yang menyebut nama pembaca dan dia
+	// belum sampai ke pesannya. Sengaja dua angka, bukan satu boolean: sebutan
+	// yang datang SAAT percakapannya sedang terbuka harus tetap menyalakan
+	// penanda sampai pesannya benar-benar terlihat.
+	MentionSeq    int64 `json:"mentionSeq"`
+	MentionAckSeq int64 `json:"mentionAckSeq"`
 }

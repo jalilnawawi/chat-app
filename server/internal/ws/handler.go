@@ -199,6 +199,14 @@ func (h *Handler) readLoop(ctx context.Context, c *Client, user store.User) {
 func (h *Handler) handleSync(ctx context.Context, c *Client, user store.User, raw json.RawMessage) {
 	var payload struct {
 		Cursors map[string]int64 `json:"cursors"`
+		// ReactionCursors adalah jam KEDUA, dan client mengirimnya terpisah
+		// karena dia menghitung hal yang berbeda. Reaksi menempel pada pesan
+		// lama, yang seq-nya sudah lama berhenti bergerak — cursor pesan tidak
+		// akan pernah menyusulkannya. Lihat store/reactions.go.
+		//
+		// Client lama yang tidak mengirim peta ini tetap dilayani: petanya
+		// kosong, dan bagian reaksi dilewati tanpa merusak apa pun.
+		ReactionCursors map[string]int64 `json:"reactionCursors"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return
@@ -217,7 +225,7 @@ func (h *Handler) handleSync(ctx context.Context, c *Client, user store.User, ra
 			continue
 		}
 
-		missed, err := h.store.MessagesSince(syncCtx, convID, seq, maxResume)
+		missed, err := h.store.MessagesSince(syncCtx, convID, user.ID, seq, maxResume)
 		if err != nil {
 			h.log.Error("resume gagal", "conversation", convID, "err", err)
 			continue
@@ -239,9 +247,51 @@ func (h *Handler) handleSync(ctx context.Context, c *Client, user store.User, ra
 			}
 			h.m.WSResumeSent.Add(float64(len(chunk)))
 		}
+
+		// Reaksi menyusul SETELAH pesannya, dan urutan itu penting: sebuah
+		// ringkasan reaksi menunjuk id pesan, dan client yang belum punya
+		// pesannya tidak punya tempat untuk menaruhnya.
+		//
+		// Pesan yang baru saja disusulkan di atas sudah membawa ringkasannya
+		// sendiri, jadi yang tersisa di sini justru yang paling mudah
+		// terlewat: reaksi pada pesan LAMA yang isinya tidak berubah sama
+		// sekali.
+		if !h.resumeReactions(syncCtx, c, user, convID, payload.ReactionCursors[idStr]) {
+			return
+		}
 	}
 
 	h.sendTo(c, hub.Event{Type: hub.EventSyncComplete, Payload: struct{}{}})
+}
+
+// resumeReactions menyusulkan keadaan reaksi yang berubah selagi client putus.
+// Mengembalikan false bila koneksinya tidak sanggup lagi menerima — pemanggil
+// berhenti, sama seperti pada susulan pesan.
+func (h *Handler) resumeReactions(ctx context.Context, c *Client, user store.User, convID uuid.UUID, after int64) bool {
+	changed, err := h.store.ReactionsSince(ctx, convID, user.ID, after, maxResume)
+	if err != nil {
+		h.log.Error("resume reaksi gagal", "conversation", convID, "err", err)
+		// Bukan alasan menghentikan seluruh resume: pesannya yang penting sudah
+		// sampai, dan reaksi yang tertinggal akan terlihat saat riwayatnya
+		// dimuat ulang.
+		return true
+	}
+	if len(changed) == 0 {
+		return true
+	}
+
+	for chunk := range slices.Chunk(changed, resumeBatch) {
+		ev := hub.Event{Type: hub.EventReactionBatch, Payload: map[string]any{
+			"conversationId": convID,
+			"messages":       chunk,
+		}}
+		if !h.sendWaiting(ctx, c, ev) {
+			h.m.WSResumeFail.Inc()
+			h.log.Warn("susulan reaksi terputus", "user", user.ID, "conversation", convID)
+			return false
+		}
+	}
+	return true
 }
 
 func (h *Handler) handleTyping(ctx context.Context, user store.User, raw json.RawMessage) {
