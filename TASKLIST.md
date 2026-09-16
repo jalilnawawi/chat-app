@@ -10,6 +10,12 @@ Lihat [docs/scaling.md](docs/scaling.md).
 Lampiran & push notification: **SELESAI** (15 Sep 2026) — lihat
 [docs/lampiran-dan-push.md](docs/lampiran-dan-push.md).
 
+Turunan gambar & permintaan sepotong: **SELESAI** (15 Sep 2026) — foto 12
+megapiksel turun 474 kali, dan video panjang bisa dilompati. Lihat
+[docs/thumbnail-dan-range.md](docs/thumbnail-dan-range.md).
+
+Berikutnya: **Fase 9 — membalas, menyebut, dan bereaksi.**
+
 Legend: `[ ]` belum · `[~]` jalan · `[x]` selesai
 
 ---
@@ -262,7 +268,94 @@ jawabannya selalu "semuanya". Keputusan lengkap di
    yang sebenarnya PNG. Baru terlihat saat header `Content-Disposition`
    sungguhan dibaca berdampingan dengan `Content-Type`-nya.
 
-## Fase 9 — Kandidat berikutnya
+## Fase 9 — Membalas, menyebut, dan bereaksi
+Tiga fitur yang diambil bersamaan karena bentuknya sama: **metadata yang
+menempel pada SATU pesan tertentu.** Ketiganya butuh kolom atau tabel baru yang
+menunjuk ke `messages`, ketiganya butuh event WS baru, dan ketiganya harus ikut
+terbawa saat riwayat dibaca tanpa menambah satu query per pesan.
+
+Mengerjakannya terpisah berarti menyelesaikan masalah "bagaimana metadata
+per-pesan sampai ke client" tiga kali dengan tiga jawaban yang berbeda.
+
+Referensinya SeaTalk ([seatalk.io](https://seatalk.io/features/communication)),
+yang aplikasinya tertutup — yang bisa dilihat cuma daftar fiturnya.
+
+### Balas / kutip
+- [ ] Kolom `reply_to_id` di `messages`, menunjuk ke tabelnya sendiri
+- [ ] Isi pesan yang dibalas diambil lewat SATU self-join per halaman riwayat,
+      **bukan disalin** ke dalam barisnya.
+
+      Ini berbeda dari keputusan lampiran di Fase 7, dan perbedaannya disengaja:
+      salinan lampiran boleh ada karena lampiran tidak pernah berubah setelah
+      terpasang. Isi pesan BERUBAH — diedit dan dihapus — jadi salinannya pasti
+      basi. Self-join pada primary key murah, dan satu kali per halaman, bukan
+      per pesan.
+- [ ] Pesan yang dibalas sudah dihapus → tampil sebagai "pesan dihapus", bukan
+      hilang. Yang diedit → tampil versi terbarunya. Keduanya konsekuensi wajar
+      dari tidak menyalin, dan keduanya perilaku yang benar.
+- [ ] **Pesan yang dibalas WAJIB berada di percakapan yang sama.** Tanpa
+      pemeriksaan ini, mengutip id pesan dari percakapan yang tidak kita ikuti
+      akan menampilkan isinya — kebocoran yang bentuknya persis seperti fitur.
+- [ ] UI: gelembung kutipan yang bisa diklik untuk melompat ke pesan aslinya
+
+### Mention
+- [ ] Client mengirim `mentionedUserIds` eksplisit, BUKAN server mengurai
+      `@nama` dari teks. Nama tampilan boleh mengandung spasi, dan penguraian
+      teks akan selalu punya kasus tepi; yang lebih penting, siapa yang
+      dibangunkan tidak boleh ditentukan oleh cara sebuah string ditulis.
+- [ ] Server memvalidasi tiap id: harus anggota percakapan itu. Client tidak
+      pernah dipercaya soal siapa yang berhak dibangunkan.
+- [ ] Mention **menembus peredam dering** Fase 7 — dering biasa tetap diredam
+      token bucket per percakapan, yang menyebut nama seseorang tidak. Inilah
+      alasan fitur ini layak digabung dengan push yang sudah ada.
+- [ ] `@semua` untuk grup, dengan kuotanya sendiri — satu orang yang membangunkan
+      dua ratus orang sekaligus adalah hal yang harus dibatasi, bukan dilarang
+- [ ] Penanda unread terpisah: "ada yang menyebut kamu" berbeda dari "ada pesan
+      baru", dan bertahan walau percakapannya sudah dibuka sekilas
+
+### Reaksi
+- [ ] Tabel `message_reactions` dengan primary key `(message_id, user_id, emoji)`
+      — satu orang boleh memberi beberapa emoji berbeda, tapi tidak bisa
+      memberi emoji yang sama dua kali. Bentuk kuncinya yang memaksakan itu,
+      bukan kode aplikasi.
+- [ ] Diringkas per halaman riwayat dalam satu query beragregasi, bukan satu
+      query per pesan
+- [ ] Event WS `reaction.added` / `reaction.removed`, dan ikut menyusul lewat
+      jalur resume seperti event lain — reaksi yang muncul saat kita offline
+      tetap harus terlihat saat menyambung lagi
+- [ ] Emoji divalidasi panjangnya dan harus berupa satu grafem; kolom teks bebas
+      di sini berarti pesan kedua yang menyamar jadi reaksi
+- [ ] Kuota sendiri: menekan dan melepas reaksi adalah dua permintaan yang bisa
+      diulang secepat jari bergerak
+- [ ] Reaksi TIDAK membangunkan notifikasi push
+
+### Test untuk `internal/store`, disisipkan sambil jalan
+Bukan fase tersendiri. Fase ini menambah SQL baru ke satu-satunya paket yang
+sampai sekarang tidak punya satu test pun — dan itu justru lapisan tempat satu
+salah ketik berubah jadi kehilangan data.
+
+- [ ] Harness Postgres untuk test (container sekali pakai atau skema sementara),
+      dilewati otomatis bila database tidak tersedia supaya `go test` tetap
+      hijau di mesin yang belum menyalakan docker
+- [ ] Test untuk SQL yang ditulis di fase ini
+- [ ] Test untuk yang paling mudah rusak diam-diam dari fase sebelumnya:
+      idempotensi kirim pesan, pemasangan lampiran, dan izin baca lampiran
+
+### Yang sengaja TIDAK dikerjakan di fase ini
+- **Panggilan suara/video.** Yang terbesar dari daftar SeaTalk, dan jalurnya
+  jelas — repo mereka memuat fork `pion/webrtc` dan `pion/ice`, jadi backend Go
+  kita ada di jalur yang sama. Tetap ditunda: dia satu fase penuh sendiri, dan
+  dia menyeret kembali urusan deployment lewat kebutuhan server TURN.
+- **Terjemahan, pesan terjadwal, self-destruct.** Menarik, tapi tidak satu pun
+  mengubah bentuk aplikasi seperti tiga fitur di atas.
+
+## Fase 10 — Kandidat berikutnya
+- [ ] **Menemukan pesan**: cari, teruskan, dan pin — kelompok yang saling
+      menguatkan seperti Fase 9. `pg_trgm` sudah terpasang sejak Fase 6, tapi
+      untuk isi pesan `tsvector` hampir pasti pilihan yang lebih tepat daripada
+      trigram, dan itu keputusan yang layak ditulis saat mengerjakannya.
+- [ ] **Pesan suara**: lampiran audio dan permintaan sepotong sudah jalan sejak
+      Fase 8; yang belum cuma UI perekamnya
 - [ ] Partisi `messages` — tetap ditunda, dan pemicunya tetap belum ada; rencana
       lengkapnya sudah ditulis di [docs/scaling.md](docs/scaling.md)
 - [ ] Pratinjau bingkai pertama untuk video — menuntut dekoder video di dalam
@@ -270,3 +363,17 @@ jawabannya selalu "semuanya". Keputusan lengkap di
 - [ ] Beberapa ukuran turunan (`srcset`) — satu ukuran sudah menutup selisih
       seratus kali lipat; yang kedua hanya dua kali, dengan menggandakan jumlah
       objek di penyimpanan
+
+## Sebelum aplikasi ini boleh dipakai orang
+Bukan fase, melainkan daftar yang harus lunas kapan pun tujuannya berubah dari
+"menambah fitur" jadi "menjalankannya untuk orang lain". Ditulis di sini supaya
+tidak perlu ditemukan ulang nanti.
+
+- [ ] Cara men-deploy: `Dockerfile`, CI, dan sesuatu yang menjalankan rolling
+      deploy yang logikanya sudah ada di `cmd/server` sejak Fase 6
+- [ ] TLS dan `SECURE_COOKIE=true` — bawaannya `false`, dan tanpa ini aplikasi
+      tidak boleh menyentuh internet
+- [ ] Prosedur cadangan untuk Postgres DAN SeaweedFS; keduanya memegang data
+      yang tidak bisa dibuat ulang
+- [ ] Reset password — sekarang orang yang lupa kehilangan akunnya selamanya
+- [ ] Hapus akun, blokir pengguna, dan cara melaporkan penyalahgunaan
