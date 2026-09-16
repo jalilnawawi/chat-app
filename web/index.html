@@ -7,6 +7,45 @@
          wajah. Tanpa baris ini browser tetap meminta /favicon.ico dan
          mendapat 404 pada setiap pemuatan halaman. -->
     <link rel="icon" type="image/png" href="/icon.png" />
+    <!-- Warna bilah alamat ponsel. Tanpa ini, aplikasi yang latarnya teal-putih
+         duduk di bawah bilah abu-abu bawaan browser, dan sambungannya terlihat
+         seperti dua aplikasi yang ditempel. Isinya diganti oleh tema.ts setiap
+         kali temanya berpindah; yang di sini cuma nilai awalnya. -->
+    <meta name="theme-color" content="#e7f8f7" />
+    <meta name="color-scheme" content="light dark" />
+    <!--
+      Tema dipasang SEBELUM berkas JavaScript utama diminta, dan itu seluruh
+      alasan potongan ini ditulis di sini alih-alih di dalam aplikasi.
+
+      Modul ES selalu ditunda sampai halaman selesai diurai. Kalau temanya baru
+      dipasang di sana, orang yang memilih gelap akan melihat satu kedipan putih
+      seterang layar penuh setiap kali membuka aplikasi — dan kedipan itu paling
+      menyakitkan justru pada orang yang memilih gelap karena matanya.
+
+      Aturannya sengaja diulang dari tema.ts, bukan diimpor: mengimpornya berarti
+      menunggu, dan menunggu adalah persis hal yang dihindari di sini.
+    -->
+    <script>
+      (function () {
+        var pilihan = 'sistem';
+        try {
+          pilihan = localStorage.getItem('tema') || 'sistem';
+        } catch (e) {
+          /* Penyimpanan diblokir; ikut sistem saja. */
+        }
+        var gelap =
+          pilihan === 'gelap' ||
+          (pilihan !== 'terang' && matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.tema = gelap ? 'gelap' : 'terang';
+        document.documentElement.style.colorScheme = gelap ? 'dark' : 'light';
+        if (gelap) {
+          document
+            .querySelector('meta[name="theme-color"]')
+            .setAttribute('content', '#0a1419');
+        }
+      })();
+    </script>
+    <meta name="description" content="Kirim pesan, foto, dan berkas ke teman atau grup." />
     <title>Chat</title>
   </head>
   <body>

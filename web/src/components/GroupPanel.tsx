@@ -3,6 +3,7 @@ import { ApiError, api } from '../api';
 import { useStore } from '../store';
 import type { Conversation, User } from '../types';
 import Avatar from './Avatar';
+import Icon from './Icon';
 
 /**
  * Panel kelola grup.
@@ -83,21 +84,26 @@ export default function GroupPanel({
   };
 
   return (
-    <aside className="flex w-80 shrink-0 flex-col border-l border-line bg-surface">
+    // Di layar sempit panel ini MENUTUPI percakapan, bukan mendesaknya:
+    // tiga kolom berdampingan di lebar 360px berarti ketiganya tidak
+    // terbaca. Di layar lebar dia kembali jadi kolom di sebelah kanan.
+    <aside
+      className="fixed inset-0 z-30 flex w-full flex-col bg-surface md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-line"
+    >
       <header className="flex items-center justify-between border-b border-line px-4 py-3">
-        <h3 className="text-sm font-semibold">Kelola grup</h3>
+        <h3 className="text-[15px] font-bold">Kelola grup</h3>
         <button
           onClick={onClose}
           aria-label="Tutup panel grup"
-          className="rounded px-1.5 py-0.5 text-muted transition hover:text-ink"
+          className="grid size-9 place-items-center rounded-xl text-muted transition hover:bg-canvas hover:text-ink"
         >
-          ✕
+          <Icon name="tutup" size={18} />
         </button>
       </header>
 
       <div className="flex-1 overflow-y-auto">
         <section className="border-b border-line px-4 py-3">
-          <label className="mb-1 block text-xs font-medium text-muted">Judul</label>
+          <label className="mb-1.5 block text-[13px] font-semibold text-muted">Judul</label>
           {iAmOwner ? (
             <input
               value={title}
@@ -112,25 +118,25 @@ export default function GroupPanel({
                 }
                 if (e.key === 'Escape') setTitle(conversation.title ?? '');
               }}
-              className="w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm outline-none focus:border-accent disabled:opacity-50"
+              className="w-full rounded-xl border border-line-strong bg-canvas px-3.5 py-2.5 text-[15px] outline-none transition focus:bg-surface disabled:opacity-50"
             />
           ) : (
-            <p className="text-sm">{conversation.title}</p>
+            <p className="text-[15px] font-medium">{conversation.title}</p>
           )}
         </section>
 
         {iAmOwner && (
           <section className="border-b border-line px-4 py-3">
-            <label className="mb-1 block text-xs font-medium text-muted">Tambah anggota</label>
+            <label className="mb-1.5 block text-[13px] font-semibold text-muted">Tambah anggota</label>
             <input
               value={query}
               disabled={busy}
               placeholder="Cari nama atau username…"
               onChange={e => setQuery(e.target.value)}
-              className="w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm outline-none focus:border-accent disabled:opacity-50"
+              className="w-full rounded-xl border border-line-strong bg-canvas px-3.5 py-2.5 text-[15px] outline-none transition focus:bg-surface disabled:opacity-50"
             />
             {found.length > 0 && (
-              <ul className="mt-1.5 overflow-hidden rounded-lg border border-line">
+              <ul className="mt-2 overflow-hidden rounded-xl border border-line">
                 {found.map(u => (
                   <li key={u.id}>
                     <button
@@ -142,10 +148,10 @@ export default function GroupPanel({
                           setFound([]);
                         })
                       }
-                      className="block w-full px-3 py-2 text-left text-sm transition hover:bg-canvas disabled:opacity-50"
+                      className="block w-full px-3.5 py-2.5 text-left text-sm transition hover:bg-accent-soft disabled:opacity-50"
                     >
-                      <span className="font-medium">{u.displayName}</span>
-                      <span className="ml-2 text-xs text-muted">@{u.username}</span>
+                      <span className="font-semibold">{u.displayName}</span>
+                      <span className="ml-2 text-[13px] text-muted">@{u.username}</span>
                     </button>
                   </li>
                 ))}
@@ -155,23 +161,27 @@ export default function GroupPanel({
         )}
 
         <section className="px-4 py-3">
-          <p className="mb-2 text-xs font-medium text-muted">{members.length} anggota</p>
+          <p className="mb-2 text-[13px] font-semibold text-muted">{members.length} anggota</p>
           <ul className="flex flex-col gap-0.5">
             {members.map(m => {
               const isMe = m.userId === me?.id;
               return (
                 <li
                   key={m.userId}
-                  className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-canvas"
+                  className="group flex items-center gap-2.5 rounded-xl px-2 py-2 transition hover:bg-canvas"
                 >
-                  <Avatar name={m.displayName} url={m.avatarUrl} size={28} />
+                  <Avatar name={m.displayName} url={m.avatarUrl} size={34} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm">
+                    <span className="block truncate text-sm font-semibold">
                       {m.displayName}
-                      {isMe && <span className="ml-1 text-xs text-muted">(kamu)</span>}
+                      {isMe && (
+                        <span className="ml-1 text-[13px] font-normal text-muted">(kamu)</span>
+                      )}
                     </span>
                     {m.role === 'owner' && (
-                      <span className="block text-[11px] text-accent">Pemilik</span>
+                      <span className="block text-[11.5px] font-medium text-accent-text">
+                        Pemilik
+                      </span>
                     )}
                   </span>
 
@@ -187,17 +197,17 @@ export default function GroupPanel({
                         onClick={() =>
                           void run(() => transferOwnership(conversation.id, m.userId))
                         }
-                        className="rounded px-1.5 py-0.5 text-xs text-muted transition hover:text-ink disabled:opacity-50"
+                        className="rounded-lg px-2 py-1 text-[12px] font-medium text-muted transition hover:bg-accent-soft hover:text-accent-text disabled:opacity-50"
                       >
-                        jadikan pemilik
+                        Jadikan pemilik
                       </button>
                       <button
                         disabled={busy}
                         title={`Keluarkan ${m.displayName}`}
                         onClick={() => void run(() => removeMember(conversation.id, m.userId))}
-                        className="rounded px-1.5 py-0.5 text-xs text-red-500 transition hover:underline disabled:opacity-50"
+                        className="rounded-lg px-2 py-1 text-[12px] font-medium text-danger transition hover:bg-danger-soft disabled:opacity-50"
                       >
-                        keluarkan
+                        Keluarkan
                       </button>
                     </span>
                   )}
@@ -209,14 +219,14 @@ export default function GroupPanel({
       </div>
 
       {error && (
-        <p className="border-t border-line px-4 py-2 text-xs text-red-500">{error}</p>
+        <p className="border-t border-line bg-danger-soft px-4 py-2.5 text-[13px] text-danger">{error}</p>
       )}
 
       <footer className="border-t border-line px-4 py-3">
         <button
           disabled={busy}
           onClick={() => void run(() => leaveGroup(conversation.id))}
-          className="w-full rounded-lg border border-line px-3 py-2 text-sm text-red-500 transition hover:border-red-500 disabled:opacity-50"
+          className="w-full rounded-xl border border-line-strong px-3 py-2.5 text-sm font-semibold text-danger transition hover:border-danger hover:bg-danger-soft disabled:opacity-50"
         >
           Keluar dari grup
         </button>
@@ -225,7 +235,7 @@ export default function GroupPanel({
           // keluar: kepemilikan yang berpindah diam-diam adalah kejutan, dan
           // kejutan pada tindakan yang tidak bisa dibatalkan selalu terasa
           // seperti kesalahan aplikasi.
-          <p className="mt-1.5 text-center text-[11px] text-muted">
+          <p className="mt-2 text-center text-[11.5px] text-muted">
             Kepemilikan pindah ke anggota terlama
           </p>
         )}

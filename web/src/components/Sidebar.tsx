@@ -4,6 +4,7 @@ import { unsubscribeThisDevice, usePush } from '../push';
 import { useStore } from '../store';
 import type { Conversation } from '../types';
 import Avatar, { dotFor, statusLabel } from './Avatar';
+import Icon from './Icon';
 import NewChatDialog from './NewChatDialog';
 
 /** Judul percakapan: grup pakai nama grup, DM pakai nama lawan bicara. */
@@ -55,10 +56,38 @@ function preview(c: Conversation): string {
   return `📎 ${a.name}`;
 }
 
+/**
+ * Jam pada baris percakapan.
+ *
+ * Hari ini menampilkan jamnya, kemarin menyebut namanya, sisanya tanggal. Yang
+ * dicari orang di daftar ini bukan "kapan persisnya", melainkan "masih hangat
+ * atau sudah lama" — dan tiga bentuk itu sudah menjawabnya tanpa satu pun baris
+ * yang lebih panjang dari empat huruf.
+ */
+function waktuRingkas(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return '';
+
+  const hariIni = new Date();
+  const sama = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+  if (sama(at, hariIni)) {
+    return at.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  const kemarin = new Date(hariIni);
+  kemarin.setDate(kemarin.getDate() - 1);
+  if (sama(at, kemarin)) return 'Kemarin';
+
+  return at.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+}
+
 export default function Sidebar({
+  hiddenOnMobile,
   accountOpen,
   onToggleAccount,
 }: {
+  /** Layar sempit hanya memuat satu kolom; saat percakapan terbuka, ini yang mengalah. */
+  hiddenOnMobile: boolean;
   accountOpen: boolean;
   onToggleAccount: () => void;
 }) {
@@ -85,8 +114,12 @@ export default function Sidebar({
   }
 
   return (
-    <aside className="flex w-72 shrink-0 flex-col border-r border-line bg-surface">
-      <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
+    <aside
+      className={`w-full shrink-0 flex-col border-line bg-surface md:flex md:w-80 md:border-r ${
+        hiddenOnMobile ? 'hidden' : 'flex'
+      }`}
+    >
+      <header className="flex items-center gap-1 border-b border-line px-3 py-3">
         {/* Kepala sidebar adalah satu tombol: menekan foto atau nama sendiri
             membuka panel akun. Itu tempat yang sudah dicari orang lebih dulu,
             jauh sebelum mereka mencari ikon roda gigi. */}
@@ -94,19 +127,19 @@ export default function Sidebar({
           onClick={onToggleAccount}
           aria-pressed={accountOpen}
           title="Kelola akun kamu"
-          className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1.5 py-1 text-left transition ${
+          className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition ${
             accountOpen ? 'bg-accent-soft' : 'hover:bg-canvas'
           }`}
         >
           <Avatar
             name={me?.displayName ?? '?'}
             url={me?.avatarUrl}
-            size={32}
+            size={36}
             dot={dotFor(connected, me?.status)}
           />
           <span className="min-w-0">
-            <span className="block truncate text-sm font-semibold">{me?.displayName}</span>
-            <span className="block truncate text-xs text-muted">
+            <span className="block truncate text-[15px] font-bold">{me?.displayName}</span>
+            <span className="block truncate text-[13px] text-muted">
               {/* Status yang dipasang sendiri menggantikan keterangan koneksi:
                   yang pertama dinyatakan orangnya dengan sengaja, yang kedua
                   cuma kabar tentang jaringan. */}
@@ -115,6 +148,7 @@ export default function Sidebar({
             </span>
           </span>
         </button>
+
         <div className="flex shrink-0 items-center gap-0.5">
           {/* Tombol notifikasi hanya muncul kalau memang ada yang bisa
               dilakukan: browser mendukungnya DAN server menyalakannya. Tombol
@@ -132,32 +166,42 @@ export default function Sidebar({
                     : 'Nyalakan notifikasi saat aplikasi ditutup'
               }
               aria-label={push.enabled ? 'Matikan notifikasi' : 'Nyalakan notifikasi'}
-              className="rounded-md px-1.5 py-1 text-sm transition hover:bg-canvas disabled:opacity-40"
+              className={`grid size-10 place-items-center rounded-xl transition hover:bg-canvas disabled:opacity-40 ${
+                push.enabled ? 'text-accent-text' : 'text-muted'
+              }`}
             >
-              {push.enabled ? '🔔' : '🔕'}
+              <Icon name={push.enabled ? 'lonceng' : 'lonceng-mati'} />
             </button>
           )}
           <button
             onClick={logout}
-            className="rounded-md px-2 py-1 text-xs text-muted transition hover:bg-canvas hover:text-ink"
+            aria-label="Keluar dari akun"
+            title="Keluar"
+            className="grid size-10 place-items-center rounded-xl text-muted transition hover:bg-canvas hover:text-ink"
           >
-            Keluar
+            <Icon name="keluar" />
           </button>
         </div>
       </header>
 
-      <div className="px-3 py-2">
+      <div className="px-3 py-3">
         <button
           onClick={() => setDialogOpen(true)}
-          className="w-full rounded-lg border border-line px-3 py-2 text-sm text-muted transition hover:border-accent hover:text-ink"
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-accent-soft px-3 py-2.5 text-sm font-semibold text-accent-text transition hover:brightness-95"
         >
-          + Percakapan baru
+          <Icon name="tulis" size={18} />
+          Percakapan baru
         </button>
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-2 pb-2">
+      <nav className="flex-1 overflow-y-auto px-2 pb-3">
         {conversations.length === 0 && (
-          <p className="px-2 py-8 text-center text-sm text-muted">Belum ada percakapan.</p>
+          <div className="px-4 py-10 text-center">
+            <p className="text-sm font-semibold">Belum ada percakapan</p>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-muted">
+              Cari nama teman lewat tombol di atas, lalu kirim pesan pertama.
+            </p>
+          </div>
         )}
 
         {conversations.map(c => {
@@ -166,49 +210,70 @@ export default function Sidebar({
           // yang kedua membeku pada saat daftar percakapan diambil, dan daftar
           // itu tidak diambil ulang setiap kali seseorang memasang statusnya.
           const peerStatus = c.peer ? statuses[c.peer.id] : undefined;
+          const aktif = c.id === activeId;
+          const dipanggil = c.mentionSeq > c.mentionAckSeq;
           return (
             <button
               key={c.id}
               onClick={() => void openConversation(c.id)}
-              className={`mb-0.5 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition ${
-                c.id === activeId ? 'bg-accent-soft' : 'hover:bg-canvas'
+              aria-current={aktif ? 'true' : undefined}
+              className={`mb-0.5 flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition ${
+                aktif ? 'bg-accent-soft' : 'hover:bg-canvas'
               }`}
             >
               <Avatar
                 name={conversationTitle(c)}
                 url={c.peer?.avatarUrl}
-                size={36}
+                size={44}
+                grup={c.type === 'group'}
                 // Grup tidak punya titik keadaan: "online" untuk sekumpulan
                 // orang tidak punya arti yang bisa dijelaskan.
                 dot={c.type === 'direct' ? dotFor(isOnline, peerStatus?.status) : undefined}
               />
 
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{conversationTitle(c)}</span>
-                <span className="block truncate text-xs text-muted">{preview(c)}</span>
-              </span>
-
-              <span className="flex shrink-0 items-center gap-1">
-                {/* Penanda sebutan berdiri SENDIRI, di samping badge belum
-                    dibaca — bukan menggantikannya.
-
-                    Keduanya menjawab pertanyaan yang berbeda: "ada berapa yang
-                    belum kubaca" dan "apakah ada yang memanggilku". Yang kedua
-                    bertahan walau yang pertama sudah nol, karena membuka ruang
-                    sekilas bukan berarti sudah melihat panggilannya. */}
-                {c.mentionSeq > c.mentionAckSeq && (
+                <span className="flex items-baseline gap-2">
                   <span
-                    title="Ada yang menyebut kamu"
-                    className="grid size-5 place-items-center rounded-full bg-amber-400 text-[11px] font-bold text-amber-950"
+                    className={`min-w-0 flex-1 truncate text-[15px] ${
+                      c.unread > 0 ? 'font-bold' : 'font-semibold'
+                    }`}
                   >
-                    @
+                    {conversationTitle(c)}
                   </span>
-                )}
-                {c.unread > 0 && (
-                  <span className="rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-medium text-white">
-                    {c.unread > 99 ? '99+' : c.unread}
+                  <span className="shrink-0 text-[11.5px] text-muted">
+                    {waktuRingkas(c.lastMessage?.createdAt ?? c.updatedAt)}
                   </span>
-                )}
+                </span>
+                <span className="mt-0.5 flex items-center gap-2">
+                  <span
+                    className={`min-w-0 flex-1 truncate text-[13px] ${
+                      c.unread > 0 ? 'text-ink' : 'text-muted'
+                    }`}
+                  >
+                    {preview(c)}
+                  </span>
+
+                  {/* Penanda sebutan berdiri SENDIRI, di samping badge belum
+                      dibaca — bukan menggantikannya.
+
+                      Keduanya menjawab pertanyaan yang berbeda: "ada berapa yang
+                      belum kubaca" dan "apakah ada yang memanggilku". Yang kedua
+                      bertahan walau yang pertama sudah nol, karena membuka ruang
+                      sekilas bukan berarti sudah melihat panggilannya. */}
+                  {dipanggil && (
+                    <span
+                      title="Ada yang menyebut kamu"
+                      className="grid size-[22px] shrink-0 place-items-center rounded-full bg-call pt-px text-[13px] leading-none font-extrabold text-call-ink"
+                    >
+                      @
+                    </span>
+                  )}
+                  {c.unread > 0 && (
+                    <span className="min-w-5 shrink-0 rounded-full bg-accent px-1.5 py-0.5 text-center text-[11px] font-bold text-accent-ink tabular-nums">
+                      {c.unread > 99 ? '99+' : c.unread}
+                    </span>
+                  )}
+                </span>
               </span>
             </button>
           );

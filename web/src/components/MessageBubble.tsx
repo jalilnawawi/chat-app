@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import AttachmentList from './AttachmentList';
+import Avatar from './Avatar';
+import Icon from './Icon';
 import ReactionRow from './ReactionRow';
 import type { Message, PendingMessage, ReplyPreview, SystemEvent } from '../types';
 
@@ -10,6 +12,19 @@ type Props = {
   mine: boolean;
   showAuthor: boolean;
   authorName: string;
+  /** Foto pengirim, hanya dipakai pada pesan pembuka sebuah rentetan di grup. */
+  authorAvatar?: string;
+  /**
+   * Pesan pertama dari sebuah rentetan — pengirim yang sama, berdekatan waktu.
+   *
+   * Yang menentukan bentuk sudutnya, jarak ke pesan sebelumnya, dan apakah nama
+   * serta fotonya ditulis ulang. Sepuluh pesan berturut-turut dari satu orang
+   * yang masing-masing mengulang nama dan foto adalah sepuluh kali menjawab
+   * pertanyaan yang hanya ditanyakan sekali.
+   */
+  firstOfRun?: boolean;
+  /** Ruang kosong selebar foto, supaya gelembung satu rentetan tetap sejajar. */
+  gutter?: boolean;
   readByPeer?: boolean;
   /** Nama yang layak disorot di dalam teks; isMe menentukan sorotannya tegas. */
   highlights?: { name: string; isMe: boolean }[];
@@ -40,6 +55,9 @@ export default function MessageBubble({
   mine,
   showAuthor,
   authorName,
+  authorAvatar,
+  firstOfRun = true,
+  gutter = false,
   readByPeer,
   highlights = [],
   callsMe = false,
@@ -61,8 +79,8 @@ export default function MessageBubble({
   // Bentuknya sendiri yang mengatakan "ini bukan sesuatu yang dikatakan orang".
   if (message?.kind === 'system' && message.systemEvent) {
     return (
-      <div className="my-2 flex justify-center px-6">
-        <p className="rounded-full bg-canvas px-3 py-1 text-center text-[11px] text-muted">
+      <div className="my-3 flex justify-center px-6">
+        <p className="rounded-full border border-line bg-surface px-3 py-1 text-center text-[12px] text-muted">
           {systemText(message.systemEvent)}
         </p>
       </div>
@@ -104,35 +122,63 @@ export default function MessageBubble({
     if (next && next !== message.body) await editMessage(message.id, next);
   }
 
+  /**
+   * Sudut gelembung.
+   *
+   * Tiga sudut selalu bulat penuh; yang keempat — di sisi pengirimnya — selalu
+   * rapat. Itu yang membuat sederet pesan dari satu orang terbaca sebagai satu
+   * blok dengan tulang punggung lurus, bukan sebagai lima benda terpisah yang
+   * kebetulan berdekatan. Sudut atas ikut dirapatkan saat pesannya BUKAN
+   * pembuka rentetan, sehingga sambungannya rata.
+   */
+  const sudut = mine
+    ? `rounded-bubble rounded-br-[7px] ${firstOfRun ? '' : 'rounded-tr-[7px]'}`
+    : `rounded-bubble rounded-bl-[7px] ${firstOfRun ? '' : 'rounded-tl-[7px]'}`;
+
   return (
     <div
       ref={rootRef}
       id={message ? `msg-${message.id}` : undefined}
-      className={`group mb-2 flex ${mine ? 'justify-end' : 'justify-start'}`}
+      className={`group flex ${firstOfRun ? 'mt-3' : 'mt-0.5'} ${
+        mine ? 'justify-end' : 'justify-start'
+      }`}
     >
-      <div className={`flex max-w-[75%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
+      {/* Foto pengirim hanya di pembuka rentetan; sisanya dapat ruang kosong
+          selebar foto itu, supaya seluruh rentetan berdiri di garis yang sama.
+
+          Disejajarkan ke ATAS, bukan ke bawah: yang di bawah blok ini adalah
+          baris jam dan tombol, dan foto yang berdiri di sebelahnya terbaca
+          seperti milik baris itu, bukan milik pesannya. */}
+      {!mine && gutter && (
+        <span className="mt-0.5 mr-2 w-8 shrink-0 self-start">
+          {showAuthor && <Avatar name={authorName} url={authorAvatar} size={32} />}
+        </span>
+      )}
+
+      <div className={`flex max-w-[min(80%,34rem)] flex-col ${mine ? 'items-end' : 'items-start'}`}>
         {showAuthor && !mine && (
-          <p className="mb-0.5 px-1 text-xs font-medium text-muted">{authorName}</p>
+          <p className="mb-1 px-1 text-[13px] font-bold text-accent-text">{authorName}</p>
         )}
 
         <div
-          className={`rounded-2xl text-sm ${
+          className={`text-[15px] leading-[1.45] ${sudut} ${
             // Gelembung yang isinya cuma gambar dibuat rapat: padding tebal di
             // sekeliling foto membuatnya tampak seperti bingkai, bukan seperti
             // foto yang dikirim.
-            attachments.length > 0 && body === '' && !deleted && !replyTo ? 'p-1.5' : 'px-3.5 py-2'
+            attachments.length > 0 && body === '' && !deleted && !replyTo ? 'p-1.5' : 'px-3.5 py-2.5'
           } ${
             deleted
-              ? 'border border-dashed border-line text-muted italic'
+              ? 'border border-dashed border-line-strong text-muted italic'
               : mine
-                ? 'bg-accent text-white'
+                ? 'bg-accent text-accent-ink'
                 : 'border border-line bg-surface'
           } ${
-            // Pesan yang memanggil kita diberi pinggiran, bukan warna lain:
-            // warnanya sudah dipakai untuk membedakan pesan sendiri dari pesan
-            // orang, dan dua arti pada satu isyarat tidak bisa dibaca sekaligus.
-            callsMe && !deleted ? 'ring-2 ring-amber-400' : ''
-          } ${pending?.status === 'failed' ? 'opacity-60 ring-1 ring-red-500' : ''}`}
+            // Pesan yang memanggil kita diberi PINGGIRAN mangga, bukan bidang
+            // mangga. Latar sudah dipakai untuk membedakan pesan sendiri dari
+            // pesan orang, dan dua arti pada satu isyarat tidak bisa dibaca
+            // sekaligus. Pinggiran adalah isyarat ketiga yang masih kosong.
+            callsMe && !deleted ? 'ring-2 ring-call' : ''
+          } ${pending?.status === 'failed' ? 'opacity-70 ring-1 ring-danger' : ''}`}
         >
           {replyTo && !deleted && (
             <Quote reply={replyTo} mine={mine} nameOf={nameOf} onJump={onJump} />
@@ -167,23 +213,21 @@ export default function MessageBubble({
           )}
         </div>
 
-        {message && !deleted && (
-          <ReactionRow message={message} mine={mine} />
-        )}
+        {message && !deleted && <ReactionRow message={message} mine={mine} />}
 
         <div
-          className={`mt-0.5 flex items-center gap-2 px-1 text-[11px] text-muted ${
+          className={`mt-1 flex items-center gap-2 px-1 text-[11.5px] text-muted ${
             mine ? 'justify-end' : 'justify-start'
           }`}
         >
-          {createdAt && <span>{time(createdAt)}</span>}
+          {createdAt && <span className="tabular-nums">{time(createdAt)}</span>}
           {message?.editedAt && !deleted && <span>diedit</span>}
 
           {pending?.status === 'sending' && <span>mengirim…</span>}
           {pending?.status === 'failed' && (
             <button
               onClick={() => void retryMessage(pending.conversationId, pending.id)}
-              className="text-red-500 underline"
+              className="font-semibold text-danger underline underline-offset-2"
               // Sebab kegagalan ikut ditampilkan: pesan yang ditolak karena
               // kuota @semua terlihat persis sama dengan yang gagal karena
               // jaringan, dan keduanya menuntut tindakan yang berbeda.
@@ -193,7 +237,15 @@ export default function MessageBubble({
             </button>
           )}
 
-          {mine && message && !deleted && readByPeer && <span>dibaca</span>}
+          {/* Dua centang, bukan kata "dibaca": dia duduk di baris yang sudah
+              penuh angka dan kata, dan bentuk yang tidak perlu dibaca lebih
+              cepat sampai daripada kata yang perlu. Judulnya tetap ada untuk
+              yang memakai pembaca layar. */}
+          {mine && message && !deleted && readByPeer && (
+            <span title="Sudah dibaca" className="text-accent-text">
+              <Icon name="terbaca" size={15} />
+            </span>
+          )}
 
           {message && !deleted && !editing && (
             // Dua syarat, bukan satu.
@@ -204,10 +256,10 @@ export default function MessageBubble({
             // muncul di layar sentuh: bukan sulit ditemukan, melainkan tidak
             // bisa dijangkau sama sekali. Di sana tombolnya memang selalu
             // tampil, karena tidak ada isyarat lain untuk memunculkannya.
-            <span className="hidden gap-2 group-hover:flex [@media(hover:none)]:flex">
+            <span className="hidden items-center gap-1 group-hover:flex [@media(hover:none)]:flex">
               {onReply && (
-                <button onClick={() => onReply(message)} className="hover:text-ink">
-                  balas
+                <button onClick={() => onReply(message)} className={aksi}>
+                  Balas
                 </button>
               )}
               {mine && (
@@ -220,13 +272,13 @@ export default function MessageBubble({
                         setDraft(message.body);
                         setEditing(true);
                       }}
-                      className="hover:text-ink"
+                      className={aksi}
                     >
-                      edit
+                      Edit
                     </button>
                   )}
-                  <button onClick={() => void deleteMessage(message.id)} className="hover:text-ink">
-                    hapus
+                  <button onClick={() => void deleteMessage(message.id)} className={aksi}>
+                    Hapus
                   </button>
                 </>
               )}
@@ -237,6 +289,10 @@ export default function MessageBubble({
     </div>
   );
 }
+
+/** Tombol kecil di bawah gelembung: tanpa bidang warna sampai disentuh. */
+const aksi =
+  'rounded-md px-1.5 py-0.5 font-medium transition hover:bg-accent-soft hover:text-accent-text';
 
 /**
  * Gelembung kutipan.
@@ -266,13 +322,13 @@ function Quote({
       type="button"
       onClick={() => onJump?.(reply.id)}
       disabled={!onJump}
-      className={`mb-1.5 flex w-full flex-col items-start gap-0.5 rounded-lg border-l-2 px-2 py-1 text-left text-xs transition ${
+      className={`mb-2 flex w-full flex-col items-start gap-0.5 rounded-lg border-l-[3px] px-2.5 py-1.5 text-left text-[13px] transition ${
         mine
-          ? 'border-white/60 bg-white/15 hover:bg-white/25'
-          : 'border-accent bg-accent-soft/60 hover:bg-accent-soft'
+          ? 'border-accent-ink/70 bg-accent-ink/15 hover:bg-accent-ink/25'
+          : 'border-accent bg-accent-soft/70 hover:bg-accent-soft'
       } ${onJump ? 'cursor-pointer' : ''}`}
     >
-      <span className="font-medium opacity-90">{nameOf?.(reply.senderId) ?? 'Seseorang'}</span>
+      <span className="font-bold opacity-90">{nameOf?.(reply.senderId) ?? 'Seseorang'}</span>
       <span className={`line-clamp-2 opacity-80 ${reply.deleted ? 'italic' : ''}`}>{label}</span>
     </button>
   );
@@ -315,8 +371,8 @@ function Highlighted({ text, names }: { text: string; names: { name: string; isM
         ) : (
           <span
             key={i}
-            className={`rounded px-0.5 font-medium ${
-              part.isMe ? 'bg-amber-400/40' : 'bg-current/15'
+            className={`rounded px-1 font-bold ${
+              part.isMe ? 'bg-call text-call-ink' : 'bg-current/15'
             }`}
           >
             @{part.name}

@@ -1,5 +1,6 @@
 import { useStore } from '../store';
 import { formatBytes } from './AttachmentList';
+import Icon from './Icon';
 import type { Upload } from '../types';
 
 /**
@@ -34,33 +35,33 @@ export default function UploadStrip({ conversationId }: { conversationId: string
       {uploads.map(u => (
         <div
           key={u.key}
-          className={`relative flex w-40 items-center gap-2 rounded-lg border px-2 py-1.5 ${
-            u.status === 'failed' ? 'border-red-500/60 bg-red-500/5' : 'border-line bg-canvas'
+          className={`relative flex w-44 items-center gap-2.5 rounded-xl border px-2.5 py-2 ${
+            u.status === 'failed' ? 'border-danger bg-danger-soft' : 'border-line bg-canvas'
           }`}
         >
           {u.previewUrl ? (
             <img
               src={u.previewUrl}
               alt=""
-              className="size-9 shrink-0 rounded object-cover"
+              className="size-10 shrink-0 rounded-lg object-cover"
             />
           ) : (
-            <span className="grid size-9 shrink-0 place-items-center rounded bg-line/50 text-base">
-              📎
+            <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-line text-muted">
+              <Icon name="klip" size={18} />
             </span>
           )}
 
           <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-medium">{u.name}</p>
+            <p className="truncate text-[13px] font-semibold">{u.name}</p>
             <UploadStatus upload={u} onRetry={() => retryUpload(conversationId, u.key)} />
           </div>
 
           <button
             onClick={() => removeUpload(conversationId, u.key)}
             aria-label={`Buang ${u.name}`}
-            className="absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full border border-line bg-surface text-xs text-muted transition hover:text-ink"
+            className="absolute -top-2 -right-2 grid size-6 place-items-center rounded-full border border-line bg-surface text-muted shadow-pop transition hover:text-ink"
           >
-            ×
+            <Icon name="tutup" size={13} />
           </button>
         </div>
       ))}
@@ -71,21 +72,21 @@ export default function UploadStrip({ conversationId }: { conversationId: string
 function UploadStatus({ upload, onRetry }: { upload: Upload; onRetry: () => void }) {
   if (upload.status === 'failed') {
     if (!upload.retriable) {
-      return <p className="text-[11px] text-red-500">{upload.error ?? 'gagal'}</p>;
+      return <p className="text-[11.5px] text-danger">{upload.error ?? 'gagal'}</p>;
     }
     return (
-      <button onClick={onRetry} className="text-[11px] text-red-500 underline">
+      <button onClick={onRetry} className="text-[11.5px] font-medium text-danger underline underline-offset-2">
         {upload.error ?? 'gagal'} — coba lagi
       </button>
     );
   }
 
   if (upload.status === 'ready') {
-    return <p className="text-[11px] text-muted">{formatBytes(upload.size)}</p>;
+    return <p className="text-[11.5px] text-muted">{formatBytes(upload.size)}</p>;
   }
 
   return (
-    <div className="mt-1 h-1 overflow-hidden rounded-full bg-line">
+    <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-line">
       {/* Bilah kemajuan yang sebenarnya, bukan animasi yang berputar tanpa
           tahu apa-apa. Untuk berkas sepuluh megabyte, bedanya adalah antara
           "sedang jalan" dan "mungkin sudah mati". */}

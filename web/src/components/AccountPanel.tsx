@@ -3,6 +3,8 @@ import { ApiError, api } from '../api';
 import { useStore } from '../store';
 import type { Session, StatusKind } from '../types';
 import Avatar, { untilLabel } from './Avatar';
+import Icon, { type IconName } from './Icon';
+import { pilihTema, temaTersimpan, type Tema } from '../tema';
 
 /**
  * Panel kelola akun: foto, nama, status, email, password, dan perangkat.
@@ -17,21 +19,23 @@ export default function AccountPanel({ onClose }: { onClose: () => void }) {
   if (!me) return null;
 
   return (
-    <aside className="flex w-80 shrink-0 flex-col border-l border-line bg-surface">
+    // Sama seperti panel grup: menutupi layar sempit, mendampingi layar lebar.
+    <aside className="fixed inset-0 z-30 flex w-full flex-col bg-surface md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-line">
       <header className="flex items-center justify-between border-b border-line px-4 py-3">
-        <h3 className="text-sm font-semibold">Akun kamu</h3>
+        <h3 className="text-[15px] font-bold">Akun kamu</h3>
         <button
           onClick={onClose}
           aria-label="Tutup panel akun"
-          className="rounded px-1.5 py-0.5 text-muted transition hover:text-ink"
+          className="grid size-9 place-items-center rounded-xl text-muted transition hover:bg-canvas hover:text-ink"
         >
-          ✕
+          <Icon name="tutup" size={18} />
         </button>
       </header>
 
       <div className="flex-1 overflow-y-auto">
         <ProfileSection />
         <StatusSection />
+        <TampilanSection />
         <EmailSection />
         <PasswordSection />
         <SessionSection />
@@ -88,9 +92,9 @@ function ProfileSection() {
   return (
     <section className="border-b border-line px-4 py-4">
       <div className="flex items-center gap-3">
-        <Avatar name={me.displayName} url={me.avatarUrl} size={56} />
+        <Avatar name={me.displayName} url={me.avatarUrl} size={64} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">@{me.username}</p>
+          <p className="truncate text-[15px] font-bold">@{me.username}</p>
 
           {/* Tombolnya hanya ada kalau server ini memang bisa menerimanya.
               Tombol yang selalu tampil tapi dijawab "foto profil tidak aktif di
@@ -102,7 +106,7 @@ function ProfileSection() {
               <button
                 onClick={() => fileInput.current?.click()}
                 disabled={progress !== null}
-                className="rounded-md border border-line px-2 py-1 text-xs transition hover:border-accent disabled:opacity-50"
+                className="rounded-lg border border-line-strong px-2.5 py-1.5 text-[13px] font-medium transition hover:border-accent hover:text-accent-text disabled:opacity-50"
               >
                 {progress === null ? 'Ganti foto' : `${Math.round(progress * 100)}%`}
               </button>
@@ -110,14 +114,14 @@ function ProfileSection() {
                 <button
                   onClick={() => void removeAvatar()}
                   disabled={progress !== null}
-                  className="rounded-md px-2 py-1 text-xs text-muted transition hover:text-ink disabled:opacity-50"
+                  className="rounded-lg px-2.5 py-1.5 text-[13px] text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
                 >
                   Hapus
                 </button>
               )}
             </div>
           ) : (
-            <p className="mt-1 text-[11px] text-muted">Foto profil tidak aktif di server ini.</p>
+            <p className="mt-1.5 text-[12px] leading-relaxed text-muted">Foto profil tidak aktif di server ini.</p>
           )}
         </div>
       </div>
@@ -138,7 +142,7 @@ function ProfileSection() {
       )}
 
       <label className="mt-4 block">
-        <span className="text-xs font-medium text-muted">Nama tampilan</span>
+        <span className="text-[13px] font-semibold text-muted">Nama tampilan</span>
         <input
           id="nama-tampilan"
           value={name}
@@ -152,15 +156,15 @@ function ProfileSection() {
             }
             if (e.key === 'Escape') setName(me.displayName);
           }}
-          className="mt-1 w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm outline-none focus:border-accent"
+          className="mt-1.5 w-full rounded-xl border border-line-strong bg-canvas px-3.5 py-2.5 text-[15px] outline-none transition focus:bg-surface"
         />
       </label>
 
       {/* Username sengaja tidak bisa diganti, dan itu dikatakan di muka alih-alih
           ditunggu sampai orang mencari tombolnya. */}
-      <p className="mt-1.5 text-[11px] text-muted">Username tidak bisa diganti.</p>
+      <p className="mt-2 text-[12px] leading-relaxed text-muted">Username tidak bisa diganti.</p>
 
-      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+      {error && <p className="mt-2 text-[13px] text-danger">{error}</p>}
     </section>
   );
 }
@@ -168,9 +172,9 @@ function ProfileSection() {
 // ---------- status ----------
 
 const STATUS_PILIHAN: { value: StatusKind; label: string; dot: string }[] = [
-  { value: 'available', label: 'Tersedia', dot: 'bg-emerald-500' },
-  { value: 'busy', label: 'Sibuk', dot: 'bg-red-500' },
-  { value: 'away', label: 'Tidak di tempat', dot: 'bg-amber-500' },
+  { value: 'available', label: 'Tersedia', dot: 'bg-ok' },
+  { value: 'busy', label: 'Sibuk', dot: 'bg-danger' },
+  { value: 'away', label: 'Tidak di tempat', dot: 'bg-call' },
 ];
 
 /**
@@ -217,18 +221,20 @@ function StatusSection() {
 
   return (
     <section className="border-b border-line px-4 py-4">
-      <p className="mb-2 text-xs font-medium text-muted">Status</p>
+      <p className="mb-2 text-[13px] font-semibold text-muted">Status</p>
 
       <div className="flex gap-1.5">
         {STATUS_PILIHAN.map(p => (
           <button
             key={p.value}
             onClick={() => simpan(p.value, text.trim(), durasi)}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs transition ${
-              me.status === p.value ? 'border-accent bg-accent-soft' : 'border-line hover:border-accent'
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl border px-2 py-2 text-[13px] font-medium transition ${
+              me.status === p.value
+                ? 'border-accent bg-accent-soft text-accent-text'
+                : 'border-line-strong hover:border-accent'
             }`}
           >
-            <span className={`inline-block size-2 rounded-full ${p.dot}`} />
+            <span className={`inline-block size-2.5 rounded-full ${p.dot}`} />
             {p.label}
           </button>
         ))}
@@ -245,7 +251,7 @@ function StatusSection() {
         onKeyDown={e => {
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
         }}
-        className="mt-2 w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm outline-none focus:border-accent"
+        className="mt-2 w-full rounded-xl border border-line-strong bg-canvas px-3.5 py-2.5 text-[15px] outline-none transition focus:bg-surface"
       />
 
       <div className="mt-2 flex flex-wrap gap-1.5">
@@ -256,8 +262,10 @@ function StatusSection() {
               setDurasi(i);
               simpan(me.status, text.trim(), i);
             }}
-            className={`rounded-full border px-2.5 py-1 text-[11px] transition ${
-              durasi === i ? 'border-accent bg-accent-soft' : 'border-line hover:border-accent'
+            className={`rounded-full border px-3 py-1.5 text-[12px] font-medium transition ${
+              durasi === i
+                ? 'border-accent bg-accent-soft text-accent-text'
+                : 'border-line-strong hover:border-accent'
             }`}
           >
             {d.label}
@@ -265,17 +273,82 @@ function StatusSection() {
         ))}
       </div>
 
-      {berlaku && <p className="mt-2 text-[11px] text-muted">Berlaku {berlaku}.</p>}
+      {berlaku && <p className="mt-2 text-[12px] leading-relaxed text-muted">Berlaku {berlaku}.</p>}
 
       {/* Dikatakan di muka, bukan ditemukan sendiri: ini satu-satunya hal yang
           membuat status bukan sekadar hiasan. */}
       {me.status === 'busy' && (
-        <p className="mt-1.5 text-[11px] text-muted">
+        <p className="mt-2 text-[12px] leading-relaxed text-muted">
           Notifikasi diredam selama sibuk — kecuali kalau ada yang menyebut namamu.
         </p>
       )}
 
-      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+      {error && <p className="mt-2 text-[13px] text-danger">{error}</p>}
+    </section>
+  );
+}
+
+// ---------- tampilan ----------
+
+/**
+ * Tiga pilihan, bukan saklar dua posisi.
+ *
+ * "Ikut sistem" berdiri sebagai pilihan tersendiri karena dia satu-satunya yang
+ * ikut berubah saat perangkatnya masuk mode malam sore hari. Saklar dua posisi
+ * memaksa orang membekukan salah satu warna selamanya — dan yang paling sering
+ * dipilih orang justru yang ketiga ini.
+ */
+const TAMPILAN: { value: Tema; label: string; ikon: IconName }[] = [
+  { value: 'sistem', label: 'Ikut sistem', ikon: 'perangkat' },
+  { value: 'terang', label: 'Terang', ikon: 'matahari' },
+  { value: 'gelap', label: 'Gelap', ikon: 'bulan' },
+];
+
+function TampilanSection() {
+  // Nilai awalnya dibaca dari penyimpanan, bukan dari atribut yang terpasang di
+  // halaman: yang terpasang sudah diterjemahkan jadi terang atau gelap, dan
+  // "ikut sistem" tidak bisa dibaca kembali dari sana.
+  const [tema, setTema] = useState<Tema>(temaTersimpan);
+
+  return (
+    <section className="border-b border-line px-4 py-4">
+      <p className="mb-2 text-[13px] font-semibold text-muted">Tampilan</p>
+
+      <div className="flex gap-1.5">
+        {TAMPILAN.map(t => (
+          <button
+            key={t.value}
+            onClick={() => {
+              pilihTema(t.value);
+              setTema(t.value);
+            }}
+            aria-pressed={tema === t.value}
+            className={`flex flex-1 flex-col items-center gap-1.5 rounded-xl border px-2 py-2.5 text-[12px] font-medium transition ${
+              tema === t.value
+                ? 'border-accent bg-accent-soft text-accent-text'
+                : 'border-line-strong hover:border-accent'
+            }`}
+          >
+            <Icon name={t.ikon} size={18} />
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tema === 'sistem' && (
+        <p className="mt-2 text-[12px] leading-relaxed text-muted">
+          Ikut pengaturan terang atau gelap di perangkat ini.
+        </p>
+      )}
+
+      {/* Dikatakan di muka: orang yang memasang gelap di ponsel lalu membuka
+          aplikasi yang sama di komputer dan menemukannya terang akan mengira
+          pilihannya tidak tersimpan. */}
+      {tema !== 'sistem' && (
+        <p className="mt-2 text-[12px] leading-relaxed text-muted">
+          Berlaku di perangkat ini saja.
+        </p>
+      )}
     </section>
   );
 }
@@ -334,13 +407,13 @@ function EmailSection() {
   if (!mail) {
     return (
       <section className="border-b border-line px-4 py-4">
-        <p className="mb-1 text-xs font-medium text-muted">Email</p>
+        <p className="mb-2 text-[13px] font-semibold text-muted">Email</p>
         {me.email ? (
-          <p className="truncate text-sm">{me.email}</p>
+          <p className="truncate text-[15px]">{me.email}</p>
         ) : (
-          <p className="text-sm text-muted">Belum diisi.</p>
+          <p className="text-[15px] text-muted">Belum diisi.</p>
         )}
-        <p className="mt-1 text-[11px] text-muted">
+        <p className="mt-1.5 text-[12px] leading-relaxed text-muted">
           Verifikasi email dan pemulihan password tidak aktif di server ini.
         </p>
       </section>
@@ -349,15 +422,15 @@ function EmailSection() {
 
   return (
     <section className="border-b border-line px-4 py-4">
-      <p className="mb-2 flex items-center gap-2 text-xs font-medium text-muted">
+      <p className="mb-2 flex items-center gap-2 text-[13px] font-semibold text-muted">
         Email
         {me.email &&
           (me.emailVerified ? (
-            <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-400">
+            <span className="rounded-full bg-ok-soft px-2 py-0.5 text-[11px] font-semibold text-ok">
               terverifikasi
             </span>
           ) : (
-            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+            <span className="rounded-full bg-call-soft px-2 py-0.5 text-[11px] font-semibold text-call-ink">
               belum terverifikasi
             </span>
           ))}
@@ -369,7 +442,7 @@ function EmailSection() {
         disabled={busy}
         placeholder="kamu@contoh.com"
         onChange={e => setEmail(e.target.value)}
-        className="w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm outline-none focus:border-accent disabled:opacity-50"
+        className="w-full rounded-xl border border-line-strong bg-canvas px-3.5 py-2.5 text-[15px] outline-none transition focus:bg-surface disabled:opacity-50"
       />
 
       {/* Kolom password baru muncul saat alamatnya memang berubah. Memintanya
@@ -381,7 +454,7 @@ function EmailSection() {
           disabled={busy}
           placeholder="Password kamu saat ini"
           onChange={e => setPassword(e.target.value)}
-          className="mt-2 w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm outline-none focus:border-accent disabled:opacity-50"
+          className="mt-2 w-full rounded-xl border border-line-strong bg-canvas px-3.5 py-2.5 text-[15px] outline-none transition focus:bg-surface disabled:opacity-50"
         />
       )}
 
@@ -390,7 +463,7 @@ function EmailSection() {
           <button
             onClick={() => void simpan()}
             disabled={busy || !password}
-            className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+            className="rounded-xl bg-accent px-3.5 py-2 text-[13px] font-semibold text-accent-ink transition hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100"
           >
             Simpan email
           </button>
@@ -399,7 +472,7 @@ function EmailSection() {
           <button
             onClick={() => void kirimUlang()}
             disabled={busy}
-            className="rounded-lg border border-line px-3 py-1.5 text-xs transition hover:border-accent disabled:opacity-50"
+            className="rounded-xl border border-line-strong px-3.5 py-2 text-[13px] font-medium transition hover:border-accent hover:text-accent-text disabled:opacity-50"
           >
             Kirim ulang tautan
           </button>
@@ -410,13 +483,13 @@ function EmailSection() {
           ini, "belum terverifikasi" terlihat seperti kerapian yang bisa
           diabaikan — sampai hari orangnya lupa password. */}
       {me.email && !me.emailVerified && (
-        <p className="mt-2 text-[11px] text-muted">
+        <p className="mt-2 text-[12px] leading-relaxed text-muted">
           Sebelum terverifikasi, alamat ini tidak bisa dipakai memulihkan akun.
         </p>
       )}
 
-      {note && <p className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">{note}</p>}
-      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+      {note && <p className="mt-2 text-[13px] text-ok">{note}</p>}
+      {error && <p className="mt-2 text-[13px] text-danger">{error}</p>}
     </section>
   );
 }
@@ -448,7 +521,7 @@ function PasswordSection() {
 
   return (
     <section className="border-b border-line px-4 py-4">
-      <p className="mb-2 text-xs font-medium text-muted">Ganti password</p>
+      <p className="mb-2 text-[13px] font-semibold text-muted">Ganti password</p>
 
       <input
         type="password"
@@ -456,7 +529,7 @@ function PasswordSection() {
         disabled={busy}
         placeholder="Password saat ini"
         onChange={e => setCurrent(e.target.value)}
-        className="w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm outline-none focus:border-accent disabled:opacity-50"
+        className="w-full rounded-xl border border-line-strong bg-canvas px-3.5 py-2.5 text-[15px] outline-none transition focus:bg-surface disabled:opacity-50"
       />
       <input
         type="password"
@@ -464,13 +537,13 @@ function PasswordSection() {
         disabled={busy}
         placeholder="Password baru (min. 8 karakter)"
         onChange={e => setNext(e.target.value)}
-        className="mt-2 w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm outline-none focus:border-accent disabled:opacity-50"
+        className="mt-2 w-full rounded-xl border border-line-strong bg-canvas px-3.5 py-2.5 text-[15px] outline-none transition focus:bg-surface disabled:opacity-50"
       />
 
       <button
         onClick={() => void simpan()}
         disabled={busy || !current || next.length < 8}
-        className="mt-2 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+        className="mt-2 rounded-xl bg-accent px-3.5 py-2 text-[13px] font-semibold text-accent-ink transition hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100"
       >
         Ganti password
       </button>
@@ -478,12 +551,12 @@ function PasswordSection() {
       {/* Akibatnya dikatakan SEBELUM tombolnya ditekan. Perangkat lain yang
           tiba-tiba keluar tanpa penjelasan terlihat seperti aplikasi yang rusak,
           padahal itu justru bagian yang paling penting dari fitur ini. */}
-      <p className="mt-1.5 text-[11px] text-muted">
+      <p className="mt-2 text-[12px] leading-relaxed text-muted">
         Semua perangkat lain akan dikeluarkan, termasuk yang sedang terbuka.
       </p>
 
-      {note && <p className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">{note}</p>}
-      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+      {note && <p className="mt-2 text-[13px] text-ok">{note}</p>}
+      {error && <p className="mt-2 text-[13px] text-danger">{error}</p>}
     </section>
   );
 }
@@ -516,19 +589,19 @@ function SessionSection() {
 
   return (
     <section className="px-4 py-4">
-      <p className="mb-2 text-xs font-medium text-muted">Perangkat yang sedang masuk</p>
+      <p className="mb-2 text-[13px] font-semibold text-muted">Perangkat yang sedang masuk</p>
 
-      {sessions === null && <p className="text-xs text-muted">Memuat…</p>}
+      {sessions === null && <p className="text-[13px] text-muted">Memuat…</p>}
 
       <ul className="flex flex-col gap-1">
         {(sessions ?? []).map(s => (
-          <li key={s.id} className="group flex items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-canvas">
+          <li key={s.id} className="group flex items-start gap-2 rounded-xl px-2 py-2 transition hover:bg-canvas">
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-xs">
+              <span className="block truncate text-sm font-medium">
                 {ringkasAgen(s.userAgent)}
                 {s.current && <span className="ml-1 text-muted">(perangkat ini)</span>}
               </span>
-              <span className="block text-[11px] text-muted">{terakhirDipakai(s)}</span>
+              <span className="block text-[12px] text-muted">{terakhirDipakai(s)}</span>
             </span>
 
             {/* Sesi yang sedang dipakai tidak ditawari tombol cabut: menekannya
@@ -537,16 +610,16 @@ function SessionSection() {
             {!s.current && (
               <button
                 onClick={() => void cabut(s.id)}
-                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-red-500 opacity-0 transition hover:underline group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                className="shrink-0 rounded-lg px-2 py-1 text-[12px] font-medium text-danger opacity-0 transition hover:bg-danger-soft group-hover:opacity-100 [@media(hover:none)]:opacity-100"
               >
-                cabut
+                Cabut
               </button>
             )}
           </li>
         ))}
       </ul>
 
-      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+      {error && <p className="mt-2 text-[13px] text-danger">{error}</p>}
     </section>
   );
 }

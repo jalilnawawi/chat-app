@@ -15,6 +15,8 @@ import Avatar, { dotFor, statusLabel } from './Avatar';
 import MessageBubble from './MessageBubble';
 import UploadStrip from './UploadStrip';
 import GroupPanel from './GroupPanel';
+import Icon from './Icon';
+import Tanda from './Tanda';
 import type { Message } from '../types';
 
 /** Indikator "sedang mengetik" dianggap basi setelah jeda ini. */
@@ -25,6 +27,44 @@ const JUMP_MAX_PAGES = 5;
 
 /** Lama sorotan setelah melompat ke sebuah pesan. */
 const JUMP_HIGHLIGHT_MS = 2000;
+
+/**
+ * Jeda yang memutus sebuah rentetan pesan.
+ *
+ * Dua pesan dari orang yang sama dengan jarak setengah jam bukan satu tarikan
+ * napas, walau tidak ada siapa pun yang menyela di antaranya. Menempelkannya
+ * jadi satu blok menyembunyikan jeda yang justru punya arti.
+ */
+const RUN_GAP_MS = 5 * 60_000;
+
+const hariSama = (a: string, b: string) =>
+  new Date(a).toDateString() === new Date(b).toDateString();
+
+/**
+ * Penanda hari di tengah riwayat.
+ *
+ * Jam saja tidak cukup begitu percakapan melewati tengah malam: "08.15" di
+ * bawah "23.40" terbaca seperti tujuh jam yang sama, padahal di antaranya ada
+ * satu malam penuh.
+ */
+function labelHari(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return '';
+
+  const hariIni = new Date();
+  if (hariSama(at.toISOString(), hariIni.toISOString())) return 'Hari ini';
+
+  const kemarin = new Date(hariIni);
+  kemarin.setDate(kemarin.getDate() - 1);
+  if (hariSama(at.toISOString(), kemarin.toISOString())) return 'Kemarin';
+
+  return at.toLocaleDateString('id-ID', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    ...(at.getFullYear() === hariIni.getFullYear() ? {} : { year: 'numeric' }),
+  });
+}
 
 export default function ChatPanel({ send }: { send: (type: string, payload: unknown) => void }) {
   const me = useStore(s => s.me);
@@ -49,6 +89,7 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
   const noteMention = useStore(s => s.noteMention);
   const setMentionAll = useStore(s => s.setMentionAll);
   const ackMention = useStore(s => s.ackMention);
+  const closeConversation = useStore(s => s.closeConversation);
 
   const [draft, setDraft] = useState('');
   const [dragging, setDragging] = useState(false);
@@ -109,6 +150,11 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
       roster.find(m => m.userId === userId)?.displayName ??
       (userId === me?.id ? (me?.displayName ?? 'Saya') : 'Seseorang'),
     [roster, me],
+  );
+
+  const avatarOf = useCallback(
+    (userId: string) => roster.find(m => m.userId === userId)?.avatarUrl,
+    [roster],
   );
 
   // Nama yang layak disorot di dalam teks pesan. Dihitung sekali per daftar
@@ -196,9 +242,16 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
   }, [mentionQuery, roster, me, conversation?.type]);
 
   if (!conversation || !activeId || !me) {
+    // Di layar sempit tidak ada "sebelah kiri" — daftarnya sedang memenuhi
+    // layar, dan panel ini tidak perlu ikut hadir untuk mengatakan bahwa dia
+    // kosong.
     return (
-      <section className="grid flex-1 place-items-center text-sm text-muted">
-        Pilih percakapan untuk mulai.
+      <section className="hidden flex-1 flex-col items-center justify-center gap-3 px-8 text-center md:flex">
+        <Tanda size={56} />
+        <p className="text-base font-bold">Belum ada yang dibuka</p>
+        <p className="max-w-[26ch] text-sm leading-relaxed text-muted">
+          Pilih sebuah percakapan di sebelah kiri, atau mulai yang baru.
+        </p>
       </section>
     );
   }
@@ -363,7 +416,7 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
   return (
     <div className="flex min-w-0 flex-1">
     <section
-      className="relative flex min-w-0 flex-1 flex-col"
+      className="relative flex min-w-0 flex-1 flex-col bg-canvas"
       // dragenter/dragover harus di-preventDefault, kalau tidak browser
       // membuka berkasnya sendiri dan meninggalkan halaman ini sepenuhnya.
       onDragEnter={e => {
@@ -380,23 +433,35 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
       onDrop={onDrop}
     >
       {dragging && (
-        <div className="pointer-events-none absolute inset-3 z-10 grid place-items-center rounded-2xl border-2 border-dashed border-accent bg-accent-soft/80 text-sm font-medium text-accent">
+        <div className="pointer-events-none absolute inset-3 z-10 grid place-items-center rounded-[20px] border-2 border-dashed border-accent bg-accent-soft/90 text-[15px] font-bold text-accent-text">
           Lepaskan untuk melampirkan
         </div>
       )}
 
-      <header className="flex items-center gap-3 border-b border-line bg-surface px-5 py-3">
+      <header className="flex items-center gap-2 border-b border-line bg-surface px-2 py-2.5 md:px-4 md:py-3">
+        {/* Hanya ada di layar sempit, tempat daftar percakapan benar-benar
+            pergi saat sebuah percakapan dibuka. Di layar lebar keduanya
+            bersebelahan, dan tombol kembali tidak mengembalikan apa pun. */}
+        <button
+          onClick={closeConversation}
+          aria-label="Kembali ke daftar percakapan"
+          className="grid size-10 shrink-0 place-items-center rounded-xl text-muted transition hover:bg-canvas hover:text-ink md:hidden"
+        >
+          <Icon name="kembali" />
+        </button>
+
         <Avatar
           name={conversationTitle(conversation)}
           url={conversation.peer?.avatarUrl}
-          size={36}
+          size={40}
+          grup={conversation.type === 'group'}
           dot={
             conversation.type === 'direct' ? dotFor(peerOnline, peerStatus?.status) : undefined
           }
         />
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-semibold">{conversationTitle(conversation)}</h2>
-          <p className="truncate text-xs text-muted">
+          <h2 className="truncate text-[15px] font-bold">{conversationTitle(conversation)}</h2>
+          <p className="truncate text-[13px] text-muted">
             {conversation.type === 'group'
               ? `${roster.length} anggota`
               : // Status yang dipasang orangnya menggantikan Online/Offline.
@@ -418,16 +483,18 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
             aria-label="Kelola grup"
             title="Kelola grup"
             aria-pressed={panelOpen}
-            className={`grid size-9 shrink-0 place-items-center rounded-xl border text-muted transition hover:border-accent hover:text-ink ${
-              panelOpen ? 'border-accent bg-accent-soft text-ink' : 'border-line'
+            className={`grid size-10 shrink-0 place-items-center rounded-xl transition ${
+              panelOpen
+                ? 'bg-accent-soft text-accent-text'
+                : 'text-muted hover:bg-canvas hover:text-ink'
             }`}
           >
-            ⚙
+            <Icon name="anggota" />
           </button>
         )}
       </header>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 md:px-6 md:py-4">
         {/* Pesan ditumpuk dari bawah: percakapan yang masih sedikit tetap
             menempel di dekat kolom tulis, bukan mengambang di atas. */}
         <div className="flex min-h-full flex-col justify-end">
@@ -435,43 +502,73 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
             <div className="mb-4 text-center">
               <button
                 onClick={() => void loadOlder(activeId)}
-                className="rounded-full border border-line px-3 py-1 text-xs text-muted transition hover:text-ink"
+                className="rounded-full border border-line bg-surface px-3.5 py-1.5 text-[13px] font-medium text-muted transition hover:border-accent hover:text-accent-text"
               >
                 Muat pesan lama
               </button>
             </div>
           )}
 
-          {list.map((m, i) => (
-            <div
-              key={m.id}
-              className={`rounded-2xl transition-colors ${
-                jumped === m.id ? 'bg-accent-soft/70' : ''
-              }`}
-            >
-              <MessageBubble
-                message={m}
-                mine={m.senderId === me.id}
-                showAuthor={conversation.type === 'group' && list[i - 1]?.senderId !== m.senderId}
-                authorName={nameOf(m.senderId)}
-                readByPeer={conversation.type === 'direct' && m.senderId === me.id && peerRead >= m.seq}
-                highlights={highlights}
-                callsMe={callsMe(m)}
-                nameOf={nameOf}
-                onReply={onReply}
-                onJump={id => void jumpTo(id)}
-                onSeen={onSeenMention}
-              />
-            </div>
-          ))}
+          {list.map((m, i) => {
+            const prev = list[i - 1];
+            // Hari baru selalu memutus rentetan: pesan pertama sesudah tengah
+            // malam adalah pembuka, walau pengirimnya orang yang sama.
+            const hariBaru = !prev || !hariSama(prev.createdAt, m.createdAt);
+            const firstOfRun =
+              hariBaru ||
+              prev.senderId !== m.senderId ||
+              prev.kind === 'system' ||
+              new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() > RUN_GAP_MS;
 
-          {queue.map(p => (
+            return (
+              <div key={m.id}>
+                {hariBaru && m.createdAt && (
+                  <div className="my-4 flex justify-center">
+                    <span className="rounded-full bg-ink/8 px-3 py-1 text-[12px] font-bold text-muted">
+                      {labelHari(m.createdAt)}
+                    </span>
+                  </div>
+                )}
+
+                <div
+                  className={`rounded-bubble transition-colors ${
+                    jumped === m.id ? 'bg-accent-soft' : ''
+                  }`}
+                >
+                  <MessageBubble
+                    message={m}
+                    mine={m.senderId === me.id}
+                    showAuthor={conversation.type === 'group' && firstOfRun}
+                    authorName={nameOf(m.senderId)}
+                    authorAvatar={avatarOf(m.senderId)}
+                    firstOfRun={firstOfRun}
+                    gutter={conversation.type === 'group'}
+                    readByPeer={
+                      conversation.type === 'direct' && m.senderId === me.id && peerRead >= m.seq
+                    }
+                    highlights={highlights}
+                    callsMe={callsMe(m)}
+                    nameOf={nameOf}
+                    onReply={onReply}
+                    onJump={id => void jumpTo(id)}
+                    onSeen={onSeenMention}
+                  />
+                </div>
+              </div>
+            );
+          })}
+
+          {queue.map((pe, i) => (
             <MessageBubble
-              key={p.id}
-              pending={p}
+              key={pe.id}
+              pending={pe}
               mine
               showAuthor={false}
               authorName=""
+              // Antrean selalu milik kita sendiri dan berurutan, jadi hanya yang
+              // paling depan yang membuka rentetan baru.
+              firstOfRun={i === 0}
+              gutter={conversation.type === 'group'}
               highlights={highlights}
               nameOf={nameOf}
             />
@@ -482,33 +579,42 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
       </div>
 
       {typers.length > 0 && (
-        <p className="px-5 pb-1 text-xs text-muted">{typers.join(', ')} sedang mengetik…</p>
+        <p className="flex items-center gap-2 px-5 pb-1.5 text-[13px] text-muted">
+          <span className="denyut flex shrink-0 items-center gap-1" aria-hidden>
+            <span className="size-1.5 rounded-full bg-muted" />
+            <span className="size-1.5 rounded-full bg-muted" />
+            <span className="size-1.5 rounded-full bg-muted" />
+          </span>
+          <span className="truncate">{typers.join(', ')} sedang mengetik</span>
+        </p>
       )}
 
       <UploadStrip conversationId={activeId} />
 
       {replying && (
-        <div className="flex items-start gap-2 border-t border-line bg-canvas px-4 py-2 text-xs">
-          <span className="mt-0.5 text-muted">↩</span>
-          <div className="min-w-0 flex-1">
-            <p className="font-medium text-muted">Membalas {nameOf(replying.senderId)}</p>
-            <p className="truncate text-muted/80">
-              {replying.body || '📎 Lampiran'}
+        <div className="flex items-start gap-2.5 border-t border-line bg-surface px-3 py-2.5 md:px-4">
+          <span className="mt-0.5 shrink-0 text-accent-text">
+            <Icon name="balas" size={16} />
+          </span>
+          <div className="min-w-0 flex-1 border-l-[3px] border-accent pl-2.5">
+            <p className="text-[13px] font-bold text-accent-text">
+              Membalas {nameOf(replying.senderId)}
             </p>
+            <p className="truncate text-[13px] text-muted">{replying.body || 'Lampiran'}</p>
           </div>
           <button
             onClick={() => setReplyTo(activeId, null)}
             aria-label="Batalkan balasan"
-            className="rounded px-1 text-muted transition hover:text-ink"
+            className="grid size-7 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-canvas hover:text-ink"
           >
-            ✕
+            <Icon name="tutup" size={16} />
           </button>
         </div>
       )}
 
       <div className="relative border-t border-line bg-surface p-3">
         {mentionQuery && candidates.length > 0 && (
-          <div className="absolute bottom-full left-3 z-20 mb-1 w-64 overflow-hidden rounded-xl border border-line bg-surface shadow-lg">
+          <div className="absolute bottom-full left-3 z-20 mb-2 w-72 overflow-hidden rounded-2xl border border-line bg-surface shadow-pop">
             {candidates.map((c, i) => (
               <button
                 key={c.id}
@@ -520,17 +626,17 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
                   chooseMention(c);
                 }}
                 onMouseEnter={() => setMentionIndex(i)}
-                className={`block w-full px-3 py-2 text-left text-sm transition ${
+                className={`block w-full px-3.5 py-2.5 text-left text-sm transition ${
                   i === mentionIndex ? 'bg-accent-soft' : 'hover:bg-canvas'
                 }`}
               >
                 {c.all ? (
                   <>
-                    <span className="font-medium">@semua</span>
-                    <span className="ml-2 text-xs text-muted">membangunkan seluruh anggota</span>
+                    <span className="font-bold">@semua</span>
+                    <span className="ml-2 text-[13px] text-muted">membangunkan seluruh anggota</span>
                   </>
                 ) : (
-                  <span className="font-medium">{c.name}</span>
+                  <span className="font-semibold">{c.name}</span>
                 )}
               </button>
             ))}
@@ -561,9 +667,9 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
                 onClick={() => fileInput.current?.click()}
                 aria-label="Lampirkan berkas"
                 title="Lampirkan berkas — bisa juga seret ke sini atau tempel gambar"
-                className="grid size-10 shrink-0 place-items-center rounded-xl border border-line text-muted transition hover:border-accent hover:text-ink"
+                className="grid size-11 shrink-0 place-items-center rounded-xl text-muted transition hover:bg-canvas hover:text-ink"
               >
-                📎
+                <Icon name="klip" />
               </button>
             </>
           )}
@@ -581,12 +687,12 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
             onBlur={() => setMentionQuery(null)}
             onPaste={onPaste}
             onKeyDown={onKeyDown}
-            placeholder={
-              conversation.type === 'group'
-                ? 'Tulis pesan…  (@ untuk menyebut, Enter kirim)'
-                : 'Tulis pesan…  (Enter kirim, Shift+Enter baris baru)'
-            }
-            className="max-h-32 min-h-10 flex-1 resize-none rounded-xl border border-line bg-canvas px-3 py-2 text-sm outline-none focus:border-accent"
+            // Satu kalimat pendek untuk semua ruang. Petunjuk "@ untuk
+            // menyebut" sebelumnya terpotong di tengah pada layar ponsel —
+            // petunjuk yang tidak selesai terbaca lebih buruk daripada tidak
+            // ada, dan daftar sebutannya toh muncul sendiri begitu @ diketik.
+            placeholder="Tulis pesan…"
+            className="max-h-36 min-h-11 flex-1 resize-none rounded-[22px] border border-line-strong bg-canvas px-4 py-2.5 text-[15px] leading-6 outline-none transition placeholder:text-muted focus:bg-surface"
           />
           <button
             onClick={() => void submit()}
@@ -594,9 +700,15 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
             // lebih awal akan mengirim pesan TANPA lampiran yang jelas-jelas
             // terlihat di layar — kegagalan yang diam dan membingungkan.
             disabled={(!draft.trim() && !attachable) || uploading}
-            className="rounded-xl bg-accent px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-40"
+            aria-label="Kirim pesan"
+            title={uploading ? 'Menunggu unggahan selesai' : 'Kirim (Enter)'}
+            className="flex h-11 shrink-0 items-center gap-2 rounded-full bg-accent px-4 font-semibold text-accent-ink transition hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:hover:brightness-100"
           >
-            {uploading ? 'Mengunggah…' : 'Kirim'}
+            <Icon name="kirim" size={18} />
+            {/* Kata "Kirim" ikut tampil begitu ada tempatnya. Pesawat kertas
+                sudah dikenal luas, tapi tombol berlabel tetap lebih cepat
+                dipercaya oleh orang yang baru pertama membuka aplikasi ini. */}
+            <span className="hidden sm:inline">{uploading ? 'Mengunggah…' : 'Kirim'}</span>
           </button>
         </div>
       </div>
