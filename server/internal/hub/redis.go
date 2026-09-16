@@ -19,6 +19,18 @@ import (
 const (
 	channelPrefix  = "chat:u:"
 	presencePrefix = "chat:presence:"
+
+	// controlPrefix memisahkan PERINTAH untuk instance dari EVENT untuk client.
+	//
+	// Keduanya bisa saja berbagi channel `chat:u:<uuid>` dan dibedakan dengan
+	// membaca isinya, tapi itu berarti setiap pesan chat yang lewat harus
+	// di-decode dulu hanya untuk memastikan dia bukan perintah — biaya yang
+	// dibayar jutaan kali demi sesuatu yang terjadi beberapa kali sehari.
+	//
+	// Dengan channel terpisah, Redis yang menyaring: pesan biasa tetap
+	// diteruskan ke socket sebagai byte mentah tanpa pernah disentuh, persis
+	// seperti sebelumnya.
+	controlPrefix = "chat:ctl:"
 )
 
 // Redis menyiarkan event lintas instance lewat pub/sub, dan menyimpan presence
@@ -115,8 +127,22 @@ func NewRedis(
 	return h, nil
 }
 
-func userChannel(id uuid.UUID) string { return channelPrefix + id.String() }
-func presenceKey(id uuid.UUID) string { return presencePrefix + id.String() }
+func userChannel(id uuid.UUID) string    { return channelPrefix + id.String() }
+func controlChannel(id uuid.UUID) string { return controlPrefix + id.String() }
+func presenceKey(id uuid.UUID) string    { return presencePrefix + id.String() }
+
+// revokeCommand adalah isi sebuah perintah pencabutan sesi, dengan dua
+// penyaring yang berlawanan: `keep` menyisakan satu sesi (ganti password),
+// `only` menutup satu sesi (cabut satu perangkat). Keduanya kosong berarti
+// seluruh koneksi milik user itu.
+//
+// encoding/json menyandikan []byte sebagai base64 dengan sendirinya, jadi hash
+// biner ini melewati pub/sub tanpa penyandian tambahan yang harus diingat kedua
+// sisi.
+type revokeCommand struct {
+	Keep []byte `json:"keep,omitempty"`
+	Only []byte `json:"only,omitempty"`
+}
 
 func (h *Redis) Register(ctx context.Context, c Sink) (bool, error) {
 	firstLocal := h.reg.add(c)
@@ -214,6 +240,43 @@ func (h *Redis) OnlineAmong(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, 
 	return online, nil
 }
 
+// RevokeSessionsExcept dan RevokeSession menyiarkan perintah tutup ke channel
+// kendali milik user.
+//
+// Dikirim ke Redis bahkan saat koneksinya kebetulan ada di instance ini juga —
+// satu jalur pelaksanaan, sama seperti Publish. Jalan pintas lokal berarti dua
+// jalur yang harus sama-sama benar, dan yang satu jauh lebih jarang dijalankan
+// daripada yang lain: kesalahan di sana akan menunggu berbulan-bulan sebelum
+// ketahuan.
+func (h *Redis) RevokeSessionsExcept(userID uuid.UUID, keep []byte) {
+	h.revoke(userID, revokeCommand{Keep: keep})
+}
+
+func (h *Redis) RevokeSession(userID uuid.UUID, hash []byte) {
+	h.revoke(userID, revokeCommand{Only: hash})
+}
+
+func (h *Redis) revoke(userID uuid.UUID, cmd revokeCommand) {
+	payload, err := json.Marshal(cmd)
+	if err != nil {
+		h.log.Error("encode perintah pencabutan", "user", userID, "err", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := h.rdb.Publish(ctx, controlChannel(userID), payload).Err(); err != nil {
+		h.m.RedisErrors.WithLabelValues("publish").Inc()
+		// Barisnya sudah terhapus di database, jadi sesi itu memang sudah mati —
+		// yang gagal hanya pemutusan koneksi yang telanjur terbuka, dan koneksi
+		// itu akan mati sendiri pada percobaan reconnect berikutnya.
+		h.log.Error("menyiarkan pencabutan sesi gagal", "user", userID, "err", err)
+		return
+	}
+	h.m.EventsPublished.WithLabelValues(EventSessionRevoked).Inc()
+}
+
 func (h *Redis) LocalConnections() int { return h.reg.count() }
 
 func (h *Redis) Drain(ctx context.Context, period time.Duration) {
@@ -236,7 +299,12 @@ func (h *Redis) subscribe(ctx context.Context, id uuid.UUID) error {
 	if _, ok := h.subs[id]; ok {
 		return nil
 	}
-	if err := h.pubsub.Subscribe(ctx, userChannel(id)); err != nil {
+	// Kedua channel didaftarkan bersama dan dilepas bersama. Instance yang
+	// berlangganan event seseorang tapi tidak perintahnya adalah instance yang
+	// diam-diam mengabaikan pencabutan sesi — dan diamnya baru ketahuan pada
+	// saat yang paling tidak boleh: seseorang baru saja mengganti password
+	// karena merasa akunnya dipakai orang lain.
+	if err := h.pubsub.Subscribe(ctx, userChannel(id), controlChannel(id)); err != nil {
 		h.m.RedisErrors.WithLabelValues("subscribe").Inc()
 		return err
 	}
@@ -252,7 +320,7 @@ func (h *Redis) unsubscribe(ctx context.Context, id uuid.UUID) {
 	if _, ok := h.subs[id]; !ok {
 		return
 	}
-	if err := h.pubsub.Unsubscribe(ctx, userChannel(id)); err != nil {
+	if err := h.pubsub.Unsubscribe(ctx, userChannel(id), controlChannel(id)); err != nil {
 		h.m.RedisErrors.WithLabelValues("unsubscribe").Inc()
 		h.log.Warn("unsubscribe gagal", "user", id, "err", err)
 	}
@@ -286,7 +354,13 @@ func (h *Redis) receiveLoop(ctx context.Context) {
 			continue
 		}
 
-		id, ok := userFromChannel(msg.Channel)
+		// Perintah diperiksa lebih dulu, dan hanya dia yang pernah di-decode.
+		if id, ok := userFromChannel(msg.Channel, controlPrefix); ok {
+			h.handleControl(id, msg.Payload)
+			continue
+		}
+
+		id, ok := userFromChannel(msg.Channel, channelPrefix)
 		if !ok {
 			continue
 		}
@@ -298,13 +372,28 @@ func (h *Redis) receiveLoop(ctx context.Context) {
 	}
 }
 
-func userFromChannel(channel string) (uuid.UUID, bool) {
-	raw, ok := strings.CutPrefix(channel, channelPrefix)
+func userFromChannel(channel, prefix string) (uuid.UUID, bool) {
+	raw, ok := strings.CutPrefix(channel, prefix)
 	if !ok {
 		return uuid.Nil, false
 	}
 	id, err := uuid.Parse(raw)
 	return id, err == nil
+}
+
+// handleControl menjalankan perintah yang datang lewat channel kendali.
+//
+// Instance ini ikut menerima perintah yang dia publish sendiri, sama seperti
+// event biasa, dan itu disengaja dengan alasan yang sama: satu jalur pelaksanaan
+// saja. Instance yang tidak memegang koneksi apa pun untuk user itu akan
+// menutup nol koneksi, dan itu jawaban yang benar untuknya.
+func (h *Redis) handleControl(userID uuid.UUID, payload string) {
+	var cmd revokeCommand
+	if err := json.Unmarshal([]byte(payload), &cmd); err != nil {
+		h.log.Warn("perintah kendali tidak bisa dibaca", "user", userID, "err", err)
+		return
+	}
+	h.reg.revoke(userID, cmd.Keep, cmd.Only)
 }
 
 // ---------- presence ----------

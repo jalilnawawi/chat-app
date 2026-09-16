@@ -19,6 +19,7 @@ import (
 	"github.com/jalilnawawi/chat-app/server/internal/blob"
 	"github.com/jalilnawawi/chat-app/server/internal/config"
 	"github.com/jalilnawawi/chat-app/server/internal/hub"
+	"github.com/jalilnawawi/chat-app/server/internal/mail"
 	"github.com/jalilnawawi/chat-app/server/internal/metrics"
 	"github.com/jalilnawawi/chat-app/server/internal/migrations"
 	"github.com/jalilnawawi/chat-app/server/internal/push"
@@ -121,9 +122,19 @@ func run(cfg config.Config, log *slog.Logger) error {
 		log.Info("push notification mati: VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY belum diisi")
 	}
 
+	mailer, err := mail.New(cfg.SMTPURL, cfg.MailFrom, log)
+	if err != nil {
+		return err
+	}
+	if mailer.Enabled() {
+		log.Info("email aktif", "dari", cfg.MailFrom, "tautan", cfg.AppURL)
+	} else {
+		log.Info("email mati: SMTP_URL belum diisi — verifikasi alamat dan pemulihan password tidak tersedia")
+	}
+
 	// ---------- server ----------
 
-	srv := api.NewServer(cfg, st, broadcaster, limiter, blobs, pusher, log, m)
+	srv := api.NewServer(cfg, st, broadcaster, limiter, blobs, pusher, mailer, log, m)
 
 	httpSrv := &http.Server{
 		Addr:    cfg.HTTPAddr,
@@ -176,6 +187,9 @@ func run(cfg config.Config, log *slog.Logger) error {
 	// tidak membuka aplikasi — dan justru saat itulah paling banyak orang
 	// berstatus offline, karena koneksinya baru saja ditutup oleh drain.
 	pusher.Close()
+	// Surat ditutup bersama notifikasi, dan setelah koneksi dikuras: tautan
+	// pemulihan yang diminta di detik-detik terakhir tetap pantas diantar.
+	mailer.Close()
 
 	<-janitorDone
 	<-sweeperDone
@@ -272,6 +286,13 @@ func sweepOrphans(
 	opCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
+	// Sampah penyimpanan disapu lebih dulu, dan dia BUKAN lampiran yatim:
+	// isinya adalah foto profil lama yang sudah diganti. Keduanya menumpang
+	// penyapu yang sama karena pekerjaannya persis sama — membuang byte yang
+	// tidak ada satu pun baris lagi menyebutnya — dan penyapu kedua dengan
+	// tickernya sendiri hanya menambah satu hal lagi yang harus benar.
+	sweepGarbage(opCtx, st, blobs, log, m)
+
 	orphans, err := st.TakeOrphanAttachments(opCtx, cfg.OrphanTTL, 200)
 	if err != nil {
 		log.Warn("mengambil lampiran yatim gagal", "err", err)
@@ -302,6 +323,39 @@ func sweepOrphans(
 		m.AttachmentSwept.Inc()
 	}
 	log.Info("lampiran yatim dibuang", "jumlah", len(orphans))
+}
+
+// sweepGarbage membuang byte yang sudah dititipkan ke blob_garbage.
+//
+// Tidak ada masa tunggu seperti OrphanTTL untuk lampiran yatim, dan bedanya
+// disengaja: lampiran yatim bisa saja sedang dipakai orang yang belum menekan
+// kirim, sedangkan foto profil yang sampai ke sini SUDAH digantikan — tidak ada
+// layar mana pun yang masih menunjuk ke sana.
+func sweepGarbage(
+	ctx context.Context,
+	st *store.Store,
+	blobs blob.Store,
+	log *slog.Logger,
+	m *metrics.Metrics,
+) {
+	keys, err := st.TakeBlobGarbage(ctx, 200)
+	if err != nil {
+		log.Warn("mengambil sampah penyimpanan gagal", "err", err)
+		return
+	}
+	for _, key := range keys {
+		if err := blobs.Delete(ctx, key); err != nil {
+			// Barisnya sudah terhapus, jadi ini tidak akan dicoba lagi. Yang
+			// tertinggal adalah berkas tanpa penunjuk — tidak terlihat siapa
+			// pun, tapi tetap memakan ruang, jadi dicatat supaya bisa dihitung.
+			log.Warn("membuang sampah penyimpanan gagal", "key", key, "err", err)
+			continue
+		}
+		m.AttachmentSwept.Inc()
+	}
+	if len(keys) > 0 {
+		log.Info("sampah penyimpanan dibuang", "jumlah", len(keys))
+	}
 }
 
 // buildBackplane memilih antara mode satu instance dan multi-instance.

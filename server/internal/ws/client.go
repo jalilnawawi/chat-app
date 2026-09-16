@@ -31,9 +31,24 @@ const (
 // Client adalah satu koneksi WebSocket. Memenuhi hub.Sink.
 type Client struct {
 	userID uuid.UUID
-	conn   *websocket.Conn
-	send   chan []byte
-	m      *metrics.Metrics
+
+	// sessionHash adalah hash token sesi yang dipakai membuka koneksi ini.
+	//
+	// Dibawa sampai ke sini karena pencabutan sesi bekerja per PERANGKAT, bukan
+	// per orang: mengganti password harus menutup semua koneksi KECUALI yang
+	// sedang dipakai menekan tombolnya. Tanpa nama yang membedakan dua tab milik
+	// orang yang sama, satu-satunya pilihan adalah mengeluarkan orangnya dari
+	// layar yang sedang dia buka.
+	sessionHash []byte
+
+	conn *websocket.Conn
+	send chan []byte
+	m    *metrics.Metrics
+
+	// kick membawa satu pesan perpisahan. Berkapasitas satu dan hanya pernah
+	// diisi sekali — koneksi yang sudah diminta pergi tidak punya pesan
+	// perpisahan kedua.
+	kick chan []byte
 
 	// cancel membatalkan konteks yang dipakai readLoop dan writeLoop.
 	cancel context.CancelFunc
@@ -42,18 +57,46 @@ type Client struct {
 	done      chan struct{}
 }
 
-func newClient(userID uuid.UUID, conn *websocket.Conn, cancel context.CancelFunc, m *metrics.Metrics) *Client {
+func newClient(
+	userID uuid.UUID,
+	sessionHash []byte,
+	conn *websocket.Conn,
+	cancel context.CancelFunc,
+	m *metrics.Metrics,
+) *Client {
 	return &Client{
-		userID: userID,
-		conn:   conn,
-		send:   make(chan []byte, sendBuffer),
-		m:      m,
-		cancel: cancel,
-		done:   make(chan struct{}),
+		userID:      userID,
+		sessionHash: sessionHash,
+		conn:        conn,
+		send:        make(chan []byte, sendBuffer),
+		kick:        make(chan []byte, 1),
+		m:           m,
+		cancel:      cancel,
+		done:        make(chan struct{}),
 	}
 }
 
 func (c *Client) UserID() uuid.UUID { return c.userID }
+
+func (c *Client) SessionHash() []byte { return c.sessionHash }
+
+// Kick menitipkan pesan perpisahan lalu membiarkan writeLoop yang menutup.
+//
+// Urutannya yang penting, dan dia kebalikan dari Close: di sini payload-nya
+// ditulis LEBIH DULU, baru koneksinya berakhir. Enqueue lalu Close tampak sama
+// tapi tidak — Close membatalkan konteks tulis seketika, dan pesan yang baru
+// diantrekan kalah balapan dengan pembatalan itu lebih sering daripada tidak.
+// Yang hilang justru satu-satunya keterangan yang dimiliki orang tentang kenapa
+// aplikasinya tiba-tiba mengeluarkan dia.
+//
+// Tidak pernah memblokir, dan aman dipanggil berkali-kali: yang kedua jatuh ke
+// default karena kanalnya sudah terisi.
+func (c *Client) Kick(payload []byte) {
+	select {
+	case c.kick <- payload:
+	default:
+	}
+}
 
 // Enqueue tidak pernah memblokir.
 //
@@ -152,6 +195,16 @@ func (c *Client) writeLoop(ctx context.Context) {
 				c.Close()
 				return
 			}
+
+		case payload := <-c.kick:
+			// Ditulis dengan konteks yang BELUM dibatalkan — itu seluruh alasan
+			// pencabutan sesi lewat jalur ini, bukan lewat Close. Berhasil atau
+			// tidak, koneksinya berakhir setelah baris ini.
+			writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
+			_ = c.conn.Write(writeCtx, websocket.MessageText, payload)
+			cancel()
+			c.Close()
+			return
 
 		case <-ticker.C:
 			// Ping memblokir sampai pong diterima. Kalau lewat batas waktu,

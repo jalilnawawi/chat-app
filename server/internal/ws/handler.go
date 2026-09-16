@@ -92,7 +92,7 @@ type clientMessage struct {
 // middleware lewat cookie sesi — itulah alasan memilih cookie ketimbang token
 // di header: browser mengirim cookie otomatis saat handshake WebSocket,
 // sedangkan custom header tidak bisa dipasang dari WebSocket API.
-func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, user store.User) {
+func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, user store.User, sessionHash []byte) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: h.originHosts,
 	})
@@ -105,7 +105,10 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, user store.User)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	c := newClient(user.ID, conn, cancel, h.m)
+	// Hash sesinya ikut masuk ke koneksi: itu nama yang membedakan tab ini dari
+	// tab orang yang sama di perangkat lain, dan tanpa dia pencabutan satu
+	// perangkat berarti mengeluarkan orangnya dari semua perangkatnya.
+	c := newClient(user.ID, sessionHash, conn, cancel, h.m)
 	defer c.Close()
 
 	first, err := h.hub.Register(ctx, c)
@@ -147,7 +150,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, user store.User)
 
 	go c.writeLoop(ctx)
 
-	h.sendPresenceSnapshot(ctx, c, user.ID)
+	h.sendSnapshots(ctx, c, user.ID)
 	h.readLoop(ctx, c, user)
 	h.m.WSClosed.WithLabelValues("client").Inc()
 }
@@ -380,22 +383,49 @@ func (h *Handler) broadcastPresence(ctx context.Context, userID uuid.UUID, onlin
 	}})
 }
 
-// sendPresenceSnapshot memberi client keadaan awal: siapa saja yang sedang
-// online sekarang. Tanpa ini, client baru tahu status seseorang saat orang itu
-// kebetulan berganti status.
-func (h *Handler) sendPresenceSnapshot(ctx context.Context, c *Client, userID uuid.UUID) {
+// sendSnapshots memberi client DUA keadaan awal: siapa yang sedang terhubung,
+// dan apa yang sedang orang-orang nyatakan tentang dirinya.
+//
+// Keduanya dikirim dari satu tempat karena keduanya butuh daftar kontak yang
+// sama — dan mengambilnya dua kali adalah dua query identik pada jalur yang
+// dilewati setiap koneksi yang dibuka, termasuk ribuan yang menyambung
+// bersamaan setelah rolling deploy.
+//
+// Tetap DUA event, bukan satu. Presence dan status berubah pada saat yang
+// berbeda dan datang dari sumber yang berbeda — yang satu dari koneksi yang
+// hidup, yang satu dari Postgres — jadi menggabungkan keadaan awalnya berarti
+// menyatukan dua hal yang justru sengaja dipisah di sisa aplikasi ini.
+func (h *Handler) sendSnapshots(ctx context.Context, c *Client, userID uuid.UUID) {
 	contacts, err := h.store.ContactIDs(ctx, userID)
 	if err != nil {
+		h.log.Error("ambil kontak untuk snapshot gagal", "user", userID, "err", err)
 		return
 	}
-	online, err := h.hub.OnlineAmong(ctx, contacts)
-	if err != nil {
+
+	if online, err := h.hub.OnlineAmong(ctx, contacts); err != nil {
 		h.log.Error("ambil presence awal gagal", "user", userID, "err", err)
+	} else {
+		h.sendTo(c, hub.Event{
+			Type:    hub.EventPresenceSnapshot,
+			Payload: map[string]any{"online": online},
+		})
+	}
+
+	// Tanpa ini, status seseorang baru terlihat saat dia kebetulan
+	// menggantinya — dan "sedang rapat sampai 13.00" yang dipasang sebelum
+	// kita membuka aplikasi adalah justru yang paling ingin kita lihat.
+	//
+	// Yang dikirim hanya yang punya sesuatu untuk diceritakan; 'available'
+	// tanpa teks adalah keadaan bawaan yang sudah diasumsikan client. Lihat
+	// store.StatusesOf.
+	statuses, err := h.store.StatusesOf(ctx, contacts)
+	if err != nil {
+		h.log.Error("ambil status awal gagal", "user", userID, "err", err)
 		return
 	}
 	h.sendTo(c, hub.Event{
-		Type:    hub.EventPresenceSnapshot,
-		Payload: map[string]any{"online": online},
+		Type:    hub.EventStatusSnapshot,
+		Payload: map[string]any{"statuses": statuses},
 	})
 }
 

@@ -61,6 +61,24 @@ type Presence interface {
 	OnlineAmong(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error)
 }
 
+// Subscriptions adalah bagian dari store yang dibutuhkan paket ini, dengan
+// alasan yang sama persis dengan Presence di atas.
+//
+// BusyAmong masuk ke sini pada Fase 10 dan langsung membuktikan gunanya:
+// penyaringan penerima sampai saat itu tidak pernah menyentuh database sama
+// sekali, jadi test-nya merakit Dispatcher tanpa store. Menerima *store.Store
+// utuh berarti penambahan satu pemeriksaan berubah jadi panik nil di tiga test
+// yang tidak ada hubungannya dengan status.
+type Subscriptions interface {
+	SubscriptionsOf(ctx context.Context, userIDs []uuid.UUID) ([]store.PushSubscription, error)
+	DeleteSubscription(ctx context.Context, endpoint string) error
+	MarkSubscriptionDelivered(ctx context.Context, endpoint string) error
+
+	// BusyAmong menyaring penerima yang sedang menyatakan diri sibuk. Lihat
+	// pemakaiannya di awake.
+	BusyAmong(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error)
+}
+
 // Notification adalah satu kabar yang mungkin layak dikirim. "Mungkin", karena
 // penyaringannya baru terjadi di pekerja: siapa yang online dan siapa yang baru
 // saja dibangunkan hanya relevan pada detik pengirimannya.
@@ -71,6 +89,9 @@ type Notification struct {
 	MessageID      uuid.UUID
 	Title          string
 	Body           string
+
+	// SenderStatusBypass tidak ada, dan itu disengaja: status MEREDAM, dia tidak
+	// pernah membuka jalan. Lihat awake.
 
 	// Mentioned adalah bagian dari Recipients yang namanya benar-benar disebut
 	// di pesan ini — dan mereka MENEMBUS peredam dering.
@@ -88,7 +109,7 @@ type Notification struct {
 }
 
 type Dispatcher struct {
-	store    *store.Store
+	store    Subscriptions
 	presence Presence
 	limiter  ratelimit.Limiter
 	rule     ratelimit.Rule
@@ -116,7 +137,7 @@ type Dispatcher struct {
 // New menyalakan pengirim notifikasi. Dikembalikan nil bila kunci VAPID belum
 // diisi — lihat catatan di Dispatcher.Enqueue soal kenapa nil aman dipakai.
 func New(
-	st *store.Store,
+	st Subscriptions,
 	presence Presence,
 	limiter ratelimit.Limiter,
 	rule ratelimit.Rule,
@@ -256,25 +277,65 @@ func (d *Dispatcher) awake(ctx context.Context, n Notification) ([]uuid.UUID, er
 		connected[id] = struct{}{}
 	}
 
-	mentioned := make(map[uuid.UUID]struct{}, len(n.Mentioned))
-	for _, id := range n.Mentioned {
-		mentioned[id] = struct{}{}
-	}
-
-	out := make([]uuid.UUID, 0, len(n.Recipients))
+	// Penyaringan presence diselesaikan LEBIH DULU, sendiri.
+	//
+	// Bukan kerapian: di percakapan dua orang yang keduanya sedang membuka
+	// aplikasi — bentuk paling umum dari pesan yang dikirim di aplikasi ini —
+	// tidak ada seorang pun yang tersisa setelah baris ini, dan pemeriksaan
+	// apa pun sesudahnya adalah query yang jawabannya tidak akan pernah dibaca.
+	candidates := make([]uuid.UUID, 0, len(n.Recipients))
 	for _, id := range n.Recipients {
 		if _, ok := connected[id]; ok {
 			d.m.PushSkipped.WithLabelValues("online").Inc()
 			continue
 		}
+		candidates = append(candidates, id)
+	}
+	if len(candidates) == 0 {
+		return nil, nil
+	}
 
-		// Yang namanya disebut menembus peredam. Perhatikan bahwa dia tetap
-		// tidak menembus pemeriksaan "sedang online" di atas: orang yang tabnya
-		// terbuka di sebelah sudah melihat sebutan itu di layarnya, dan
-		// membunyikan ponselnya juga adalah memberi tahu dua kali.
+	// Status "busy" adalah peredam KEDUA, di samping token bucket per
+	// percakapan. Inilah yang membuat status bukan sekadar hiasan: dia
+	// menyambung ke peredam dering yang sudah ada sejak Fase 7.
+	//
+	// Kegagalannya tidak membungkam notifikasi — sama seperti peredam token
+	// bucket di bawah, terlalu berisik lebih baik daripada diam-diam tidak
+	// sampai.
+	busyList, err := d.store.BusyAmong(ctx, candidates)
+	if err != nil {
+		d.log.Warn("menyaring yang sedang sibuk gagal", "err", err)
+	}
+	busy := make(map[uuid.UUID]struct{}, len(busyList))
+	for _, id := range busyList {
+		busy[id] = struct{}{}
+	}
+
+	mentioned := make(map[uuid.UUID]struct{}, len(n.Mentioned))
+	for _, id := range n.Mentioned {
+		mentioned[id] = struct{}{}
+	}
+
+	out := make([]uuid.UUID, 0, len(candidates))
+	for _, id := range candidates {
+		// Yang namanya disebut menembus KEDUA peredam — token bucket maupun
+		// status "busy". Aturannya sama persis dengan keputusan Fase 9: dering
+		// biasa boleh diredam, panggilan yang menyebut nama seseorang tidak.
+		// Orang yang memasang "sedang rapat" justru yang paling butuh tahu
+		// kalau namanya dipanggil di tengah rapat itu.
+		//
+		// Perhatikan bahwa dia tetap tidak menembus pemeriksaan "sedang online"
+		// di atas: orang yang tabnya terbuka di sebelah sudah melihat sebutan
+		// itu di layarnya, dan membunyikan ponselnya juga adalah memberi tahu
+		// dua kali.
 		if _, ok := mentioned[id]; ok {
 			d.m.PushMentionBypass.Inc()
 			out = append(out, id)
+			continue
+		}
+
+		if _, ok := busy[id]; ok {
+			d.m.PushSkipped.WithLabelValues("busy").Inc()
 			continue
 		}
 

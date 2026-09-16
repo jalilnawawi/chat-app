@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ApiError, api } from '../api';
 import { useStore } from '../store';
 import type { Conversation, User } from '../types';
+import Avatar from './Avatar';
 
 /**
  * Panel kelola grup.
@@ -163,9 +164,7 @@ export default function GroupPanel({
                   key={m.userId}
                   className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-canvas"
                 >
-                  <span className="grid size-7 shrink-0 place-items-center rounded-full bg-canvas text-xs font-medium">
-                    {m.displayName.charAt(0).toUpperCase()}
-                  </span>
+                  <Avatar name={m.displayName} url={m.avatarUrl} size={28} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm">
                       {m.displayName}

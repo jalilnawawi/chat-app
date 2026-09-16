@@ -26,6 +26,7 @@ type ctxKey int
 
 const (
 	userKey ctxKey = iota
+	sessionKey
 	requestIDKey
 )
 
@@ -34,9 +35,26 @@ func requestIDFrom(ctx context.Context) string {
 	return id
 }
 
-func userFrom(ctx context.Context) store.User {
-	u, _ := ctx.Value(userKey).(store.User)
+func userFrom(ctx context.Context) store.Me {
+	u, _ := ctx.Value(userKey).(store.Me)
 	return u
+}
+
+// sessionRef adalah sesi yang dipakai permintaan ini, dalam dua bentuk yang
+// dipakai untuk dua hal berbeda.
+//
+// ID adalah nama publiknya: yang muncul di daftar sesi aktif dan yang disebut
+// saat mencabut salah satunya. Hash adalah nama internalnya: yang dipakai
+// menandai koneksi WebSocket, dan karena itu satu-satunya yang bisa menjawab
+// "koneksi mana yang BOLEH tetap hidup" saat semua sesi lain dicabut.
+type sessionRef struct {
+	ID   uuid.UUID
+	Hash []byte
+}
+
+func sessionFrom(ctx context.Context) sessionRef {
+	s, _ := ctx.Value(sessionKey).(sessionRef)
+	return s
 }
 
 // requireAuth memvalidasi cookie sesi dan menaruh user di context.
@@ -54,7 +72,8 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		user, err := s.store.UserBySession(r.Context(), auth.HashToken(cookie.Value))
+		hash := auth.HashToken(cookie.Value)
+		user, sessionID, err := s.store.UserBySession(r.Context(), hash)
 		if err != nil {
 			if !errors.Is(err, store.ErrNotFound) {
 				s.log.Error("lookup sesi", "err", err)
@@ -64,7 +83,16 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, user)))
+		// Sesinya ikut masuk ke context, bukan hanya penggunanya.
+		//
+		// Yang membutuhkannya adalah jalur-jalur Fase 10: mengganti password
+		// mencabut semua sesi KECUALI yang ini, dan daftar sesi aktif harus
+		// menandai mana yang sedang dipakai membacanya. Keduanya mustahil
+		// dijawab dari identitas penggunanya saja — dua tab milik orang yang
+		// sama tidak bisa dibedakan olehnya.
+		ctx := context.WithValue(r.Context(), userKey, user)
+		ctx = context.WithValue(ctx, sessionKey, sessionRef{ID: sessionID, Hash: hash})
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -234,10 +262,18 @@ func (s *Server) rateLimitByUser(kind string, rule ratelimit.Rule, next http.Han
 	})
 }
 
-func (s *Server) rateLimitByIP(kind string, next http.Handler) http.Handler {
+// rateLimitByIP membatasi per alamat IP — bentuk yang dipakai endpoint yang
+// BELUM punya user untuk dijadikan kunci.
+//
+// Aturannya ikut sebagai parameter sejak Fase 10, dan itu bukan kelenturan
+// yang dicari-cari: jalur pemulihan password menyuruh server mengirim surat ke
+// kotak masuk orang sungguhan, dan yang perlu dibatasi di sana bukan biaya
+// argon2 melainkan kemampuan seseorang membanjiri alamat orang lain. Dua
+// masalah yang berbeda pantas punya dua angka yang berbeda.
+func (s *Server) rateLimitByIP(kind string, rule ratelimit.Rule, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := kind + ":ip:" + clientIP(r)
-		if !s.allow(w, r, kind, key, s.cfg.AuthRate) {
+		if !s.allow(w, r, kind, key, rule) {
 			return
 		}
 		next.ServeHTTP(w, r)

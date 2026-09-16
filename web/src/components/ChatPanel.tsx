@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { useStore } from '../store';
 import { conversationTitle } from './Sidebar';
+import Avatar, { dotFor, statusLabel } from './Avatar';
 import MessageBubble from './MessageBubble';
 import UploadStrip from './UploadStrip';
 import GroupPanel from './GroupPanel';
@@ -35,9 +36,13 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
   const members = useStore(s => s.members);
   const typing = useStore(s => s.typing);
   const online = useStore(s => s.online);
+  const statuses = useStore(s => s.statuses);
   const sendMessage = useStore(s => s.sendMessage);
   const loadOlder = useStore(s => s.loadOlder);
   const uploads = useStore(s => s.uploads);
+  // Server yang belum menjawab dianggap MATI: lebih baik tombolnya muncul
+  // sedikit terlambat daripada muncul lalu ditarik kembali.
+  const attachments = useStore(s => s.config?.attachments ?? false);
   const addFiles = useStore(s => s.addFiles);
   const replyMap = useStore(s => s.replyTo);
   const setReplyTo = useStore(s => s.setReplyTo);
@@ -318,18 +323,26 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
     }
   }
 
-  function pick(files: FileList | null) {
-    if (!files || files.length === 0 || !activeId) return;
-    addFiles(activeId, Array.from(files));
+  // Satu gerbang untuk KETIGA jalan masuk berkas — tombol, seret, dan tempel.
+  //
+  // Menjaga tombolnya saja tidak cukup: menyeret berkas ke jendela dan menempel
+  // tangkapan layar adalah dua cara yang tidak pernah melewati tombol itu, dan
+  // keduanya akan berakhir sebagai unggahan yang ditolak server tanpa pernah
+  // ada yang menawarkannya.
+  function pick(files: FileList | File[] | null) {
+    if (!attachments || !files || !activeId) return;
+    const daftar = Array.from(files);
+    if (daftar.length === 0) return;
+    addFiles(activeId, daftar);
   }
 
   // Menempel gambar langsung dari papan klip — cara paling cepat mengirim
   // tangkapan layar, dan yang paling sering dicoba orang tanpa diberi tahu.
   function onPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
     const files = Array.from(e.clipboardData.files);
-    if (files.length === 0) return;
+    if (files.length === 0 || !attachments) return;
     e.preventDefault();
-    if (activeId) addFiles(activeId, files);
+    pick(files);
   }
 
   function onDrop(e: DragEvent<HTMLElement>) {
@@ -339,6 +352,9 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
   }
 
   const peerOnline = conversation.peer ? online.has(conversation.peer.id) : false;
+  // Status dibaca dari peta siaran, bukan dari salinan di dalam `peer`: yang
+  // kedua membeku pada saat daftar percakapan diambil.
+  const peerStatus = conversation.peer ? statuses[conversation.peer.id] : undefined;
 
   /** Apakah sebuah pesan memanggil pembaca — menentukan sorotan dan penanda. */
   const callsMe = (m: Message) =>
@@ -352,7 +368,7 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
       // membuka berkasnya sendiri dan meninggalkan halaman ini sepenuhnya.
       onDragEnter={e => {
         e.preventDefault();
-        if (e.dataTransfer.types.includes('Files')) setDragging(true);
+        if (attachments && e.dataTransfer.types.includes('Files')) setDragging(true);
       }}
       onDragOver={e => e.preventDefault()}
       onDragLeave={e => {
@@ -370,14 +386,26 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
       )}
 
       <header className="flex items-center gap-3 border-b border-line bg-surface px-5 py-3">
+        <Avatar
+          name={conversationTitle(conversation)}
+          url={conversation.peer?.avatarUrl}
+          size={36}
+          dot={
+            conversation.type === 'direct' ? dotFor(peerOnline, peerStatus?.status) : undefined
+          }
+        />
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-sm font-semibold">{conversationTitle(conversation)}</h2>
-          <p className="text-xs text-muted">
+          <p className="truncate text-xs text-muted">
             {conversation.type === 'group'
               ? `${roster.length} anggota`
-              : peerOnline
-                ? 'Online'
-                : 'Offline'}
+              : // Status yang dipasang orangnya menggantikan Online/Offline.
+                // Yang pertama dinyatakan dengan sengaja; yang kedua cuma kabar
+                // tentang apakah tabnya kebetulan terbuka — dan "Online" di
+                // sebelah orang yang baru saja menulis "sedang rapat" adalah
+                // undangan untuk mengganggunya.
+                statusLabel(peerStatus?.status, peerStatus?.text, peerStatus?.expiresAt) ||
+                (peerOnline ? 'Online' : 'Offline')}
           </p>
         </div>
 
@@ -510,27 +538,35 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
         )}
 
         <div className="flex items-end gap-2">
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            hidden
-            onChange={e => {
-              pick(e.target.files);
-              // Dikosongkan supaya memilih berkas yang SAMA dua kali berturut-
-              // turut tetap memicu change — nilainya tidak berubah, jadi
-              // browser tidak akan memberi tahu.
-              e.target.value = '';
-            }}
-          />
-          <button
-            onClick={() => fileInput.current?.click()}
-            aria-label="Lampirkan berkas"
-            title="Lampirkan berkas — bisa juga seret ke sini atau tempel gambar"
-            className="grid size-10 shrink-0 place-items-center rounded-xl border border-line text-muted transition hover:border-accent hover:text-ink"
-          >
-            📎
-          </button>
+          {/* Tombolnya hanya ada kalau server ini memang menerima lampiran —
+              aturan yang sama dengan tombol notifikasi di sidebar dan tombol
+              kelola grup: yang tidak boleh ditekan tidak ditampilkan, bukan
+              ditampilkan lalu ditolak. */}
+          {attachments && (
+            <>
+              <input
+                ref={fileInput}
+                type="file"
+                multiple
+                hidden
+                onChange={e => {
+                  pick(e.target.files);
+                  // Dikosongkan supaya memilih berkas yang SAMA dua kali berturut-
+                  // turut tetap memicu change — nilainya tidak berubah, jadi
+                  // browser tidak akan memberi tahu.
+                  e.target.value = '';
+                }}
+              />
+              <button
+                onClick={() => fileInput.current?.click()}
+                aria-label="Lampirkan berkas"
+                title="Lampirkan berkas — bisa juga seret ke sini atau tempel gambar"
+                className="grid size-10 shrink-0 place-items-center rounded-xl border border-line text-muted transition hover:border-accent hover:text-ink"
+              >
+                📎
+              </button>
+            </>
+          )}
 
           <textarea
             ref={textarea}

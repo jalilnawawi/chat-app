@@ -20,6 +20,7 @@ import (
 	"github.com/jalilnawawi/chat-app/server/internal/blob"
 	"github.com/jalilnawawi/chat-app/server/internal/config"
 	"github.com/jalilnawawi/chat-app/server/internal/hub"
+	"github.com/jalilnawawi/chat-app/server/internal/mail"
 	"github.com/jalilnawawi/chat-app/server/internal/metrics"
 	"github.com/jalilnawawi/chat-app/server/internal/push"
 	"github.com/jalilnawawi/chat-app/server/internal/ratelimit"
@@ -37,11 +38,13 @@ type Server struct {
 	m       *metrics.Metrics
 
 	// blobs nil berarti lampiran dimatikan; push nil berarti notifikasi
-	// dimatikan. Keduanya fitur yang butuh infrastruktur di luar proses ini,
-	// dan aplikasi harus tetap utuh sebagai chat tanpa keduanya — itu yang
+	// dimatikan; mail nil berarti verifikasi email dan pemulihan password
+	// dimatikan. Ketiganya fitur yang butuh infrastruktur di luar proses ini,
+	// dan aplikasi harus tetap utuh sebagai chat tanpa ketiganya — itu yang
 	// membuat `go run ./cmd/server` cukup untuk mengembangkan sisanya.
 	blobs blob.Store
 	push  *push.Dispatcher
+	mail  *mail.Sender
 
 	// thumbSem membatasi berapa gambar boleh dibentangkan di memori bersamaan.
 	//
@@ -62,6 +65,7 @@ func NewServer(
 	limiter ratelimit.Limiter,
 	blobs blob.Store,
 	pusher *push.Dispatcher,
+	mailer *mail.Sender,
 	log *slog.Logger,
 	m *metrics.Metrics,
 ) *Server {
@@ -80,6 +84,7 @@ func NewServer(
 		m:        m,
 		blobs:    blobs,
 		push:     pusher,
+		mail:     mailer,
 		thumbSem: thumbSem,
 	}
 }
@@ -94,14 +99,84 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
 
+	// Apa yang bisa dilakukan server ini. SENGAJA tanpa sesi.
+	//
+	// Halaman masuk sudah membutuhkannya sebelum siapa pun login: tombol "Lupa
+	// password?" yang ditampilkan pada server tanpa SMTP mengantar orang ke
+	// jalan buntu, dan orang yang lupa password adalah orang yang paling tidak
+	// punya cadangan kesabaran.
+	//
+	// Isinya bukan rahasia baru: /healthz sudah melaporkan bagian opsional mana
+	// yang menyala, di port yang sama, sejak Fase 7 — dan keduanya sekarang
+	// membacanya dari SATU method supaya tidak bisa berselisih.
+	mux.HandleFunc("GET /api/config", s.handleConfig)
+
 	// Endpoint auth memverifikasi argon2id yang sengaja mahal, jadi kuotanya
 	// per alamat IP — belum ada user yang bisa dijadikan kunci.
-	mux.Handle("POST /api/auth/register", s.rateLimitByIP("auth", http.HandlerFunc(s.handleRegister)))
-	mux.Handle("POST /api/auth/login", s.rateLimitByIP("auth", http.HandlerFunc(s.handleLogin)))
+	mux.Handle("POST /api/auth/register",
+		s.rateLimitByIP("auth", s.cfg.AuthRate, http.HandlerFunc(s.handleRegister)))
+	mux.Handle("POST /api/auth/login",
+		s.rateLimitByIP("auth", s.cfg.AuthRate, http.HandlerFunc(s.handleLogin)))
 	mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+
+	// Verifikasi dan pemulihan TIDAK menuntut sesi: keduanya diklik dari kotak
+	// masuk, sering di perangkat yang berbeda dari tempat akunnya dipakai.
+	// Kuotanya per alamat IP karena belum ada user yang bisa dijadikan kunci —
+	// sama seperti login dan register.
+	mux.Handle("POST /api/auth/verify-email",
+		s.rateLimitByIP("auth", s.cfg.AuthRate, http.HandlerFunc(s.handleVerifyEmail)))
+
+	// Pemulihan memakai kuota EMAIL, bukan kuota auth, dan dia satu-satunya
+	// endpoint tanpa sesi yang begitu: yang perlu dibatasi di sini bukan biaya
+	// argon2 melainkan kemampuan seseorang membanjiri kotak masuk orang lain
+	// dengan tautan yang tidak mereka minta.
+	mux.Handle("POST /api/auth/forgot-password",
+		s.rateLimitByIP("email", s.cfg.EmailRate, http.HandlerFunc(s.handleForgotPassword)))
+
+	mux.Handle("POST /api/auth/reset-password",
+		s.rateLimitByIP("auth", s.cfg.AuthRate, http.HandlerFunc(s.handleResetPassword)))
 
 	mux.Handle("GET /api/auth/me", s.requireAuth(http.HandlerFunc(s.handleMe)))
 	mux.Handle("GET /api/users", s.requireAuth(http.HandlerFunc(s.handleSearchUsers)))
+
+	// ---- kelola akun & profil (Fase 10) ----
+	//
+	// Kuotanya sendiri, dan sengaja ketat: tiap perubahan status disiarkan ke
+	// SELURUH kontak, jadi yang dibatasi bukan beban server melainkan kemampuan
+	// satu orang mengisi layar orang lain dengan perubahan yang tidak berarti.
+	mux.Handle("PATCH /api/account",
+		s.requireAuth(s.rateLimitByUser("profile", s.cfg.ProfileRate, http.HandlerFunc(s.handleUpdateProfile))))
+	mux.Handle("PUT /api/account/status",
+		s.requireAuth(s.rateLimitByUser("profile", s.cfg.ProfileRate, http.HandlerFunc(s.handleSetStatus))))
+	mux.Handle("POST /api/account/password",
+		s.requireAuth(s.rateLimitByUser("profile", s.cfg.ProfileRate, http.HandlerFunc(s.handleChangePassword))))
+
+	// Jalur yang menyuruh server MENGIRIM SURAT punya kuotanya sendiri, jauh
+	// lebih ketat: satu permintaan di sini berakhir di kotak masuk orang
+	// sungguhan.
+	mux.Handle("POST /api/account/email",
+		s.requireAuth(s.rateLimitByUser("email", s.cfg.EmailRate, http.HandlerFunc(s.handleSetEmail))))
+	mux.Handle("POST /api/account/email/verify",
+		s.requireAuth(s.rateLimitByUser("email", s.cfg.EmailRate, http.HandlerFunc(s.handleResendVerification))))
+
+	mux.Handle("GET /api/account/sessions", s.requireAuth(http.HandlerFunc(s.handleListSessions)))
+
+	// Mencabut sesi TIDAK dibatasi kuota, dengan alasan yang sama dengan keluar
+	// dari grup di Fase 9b: ini tindakan seseorang atas dirinya sendiri, dan
+	// menahan orang yang sedang berusaha mengeluarkan perangkat asing dari
+	// akunnya adalah bentuk penolakan yang tidak pernah pantas.
+	mux.Handle("DELETE /api/account/sessions/{id}",
+		s.requireAuth(http.HandlerFunc(s.handleRevokeSession)))
+
+	// Avatar memakai kuota unggahan yang sama dengan lampiran — keduanya
+	// mengalirkan berkas lewat proses ini.
+	mux.Handle("POST /api/account/avatar",
+		s.requireAuth(s.rateLimitByUser("upload", s.cfg.UploadRate, http.HandlerFunc(s.handleUploadAvatar))))
+	mux.Handle("DELETE /api/account/avatar", s.requireAuth(http.HandlerFunc(s.handleRemoveAvatar)))
+
+	// Izin bacanya BERBEDA dari lampiran, dan itu disengaja: siapa pun yang
+	// sudah login boleh melihat avatar siapa pun. Lihat store.AvatarForRead.
+	mux.Handle("GET /api/avatars/{id}", s.requireAuth(http.HandlerFunc(s.handleDownloadAvatar)))
 
 	mux.Handle("GET /api/conversations", s.requireAuth(http.HandlerFunc(s.handleListConversations)))
 	mux.Handle("POST /api/conversations/direct", s.requireAuth(http.HandlerFunc(s.handleCreateDirect)))
@@ -152,7 +227,6 @@ func (s *Server) Routes() http.Handler {
 	// alamat yang berbeda tidak bisa saling meracuni cache.
 	mux.Handle("GET /api/attachments/{id}/thumb", s.requireAuth(http.HandlerFunc(s.handleDownloadThumbnail)))
 
-	mux.Handle("GET /api/push/config", s.requireAuth(http.HandlerFunc(s.handlePushConfig)))
 	mux.Handle("POST /api/push/subscribe", s.requireAuth(http.HandlerFunc(s.handlePushSubscribe)))
 	mux.Handle("POST /api/push/unsubscribe", s.requireAuth(http.HandlerFunc(s.handlePushUnsubscribe)))
 
@@ -204,20 +278,63 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "instance sedang dikuras, sambungkan ke instance lain")
 		return
 	}
-	s.ws.Serve(w, r, userFrom(r.Context()))
+	s.ws.Serve(w, r, userFrom(r.Context()).User, sessionFrom(r.Context()).Hash)
+}
+
+// features melaporkan bagian opsional mana yang menyala di instance ini.
+//
+// SATU tempat, dibaca oleh /healthz maupun /api/config. Keduanya menjawab
+// pertanyaan yang sama untuk dua pembaca yang berbeda — operator dan aplikasi —
+// dan dua daftar yang disusun sendiri-sendiri adalah dua daftar yang suatu hari
+// akan berbeda pendapat tentang apa yang sedang menyala.
+func (s *Server) features() map[string]any {
+	return map[string]any{
+		"attachments": s.blobs != nil,
+		"thumbnails":  s.thumbSem != nil,
+
+		// Avatar menumpang blob.Store yang sama dengan lampiran DAN menuntut
+		// pengolahan gambar, karena berkas aslinya dibuang setelah diperkecil.
+		// Keduanya harus menyala; tanpa salah satunya tidak ada foto profil.
+		"avatars": s.blobs != nil && s.thumbSem != nil,
+
+		"push": s.push.Enabled(),
+		"mail": s.mail.Enabled(),
+	}
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	// Fitur yang bisa dimatikan ikut dilaporkan supaya "kenapa lampirannya
 	// tidak jalan di staging" bisa dijawab dengan satu permintaan, bukan dengan
 	// membaca variabel lingkungan di mesin orang lain.
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":      "ok",
-		"instance":    s.cfg.InstanceID,
-		"attachments": s.blobs != nil,
-		"thumbnails":  s.thumbSem != nil,
-		"push":        s.push.Enabled(),
-	})
+	body := s.features()
+	body["status"] = "ok"
+	body["instance"] = s.cfg.InstanceID
+	writeJSON(w, http.StatusOK, body)
+}
+
+// handleConfig memberi tahu client apa yang bisa dilakukan server ini, supaya
+// tombol yang pasti ditolak tidak pernah ditampilkan.
+//
+// Itu aturan yang sudah dipakai di tempat lain — panel kelola grup tidak
+// menampilkan tombol yang bukan hak seseorang, bukan menampilkannya lalu
+// membiarkan server menolak. Tombol yang selalu ada tapi kadang gagal membuat
+// orang belajar bahwa pesan kesalahan di aplikasi ini boleh diabaikan, dan
+// pelajaran itu terbawa ke pesan kesalahan yang benar-benar penting.
+//
+// Kunci publik VAPID ikut di sini, dan hanya di sini — /healthz tidak
+// membawanya. Client TIDAK boleh menyimpannya di kodenya sendiri: kunci adalah
+// urusan deployment, dan browser mengunci langganannya pada kunci yang dipakai
+// saat mendaftar, sehingga kunci yang tertinggal di bundel frontend akan jadi
+// kunci yang salah begitu server diganti.
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	body := s.features()
+	body["vapidPublicKey"] = s.push.PublicKey()
+
+	// Dibiarkan boleh di-cache sebentar: jawabannya hanya berubah saat server
+	// dijalankan ulang dengan variabel lingkungan yang berbeda, dan setiap
+	// halaman yang dibuka memintanya satu kali.
+	w.Header().Set("Cache-Control", "private, max-age=60")
+	writeJSON(w, http.StatusOK, body)
 }
 
 // handleReadyz ikut memeriksa database. Instance yang kehilangan Postgres masih

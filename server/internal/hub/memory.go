@@ -58,6 +58,16 @@ func (h *Memory) OnlineAmong(_ context.Context, ids []uuid.UUID) ([]uuid.UUID, e
 	return h.reg.onlineLocal(ids), nil
 }
 
+// Keduanya langsung menyentuh tabel koneksi: dalam mode satu instance, setiap
+// koneksi milik user ini memang dipegang oleh proses ini.
+func (h *Memory) RevokeSessionsExcept(userID uuid.UUID, keep []byte) {
+	h.reg.revoke(userID, keep, nil)
+}
+
+func (h *Memory) RevokeSession(userID uuid.UUID, hash []byte) {
+	h.reg.revoke(userID, nil, hash)
+}
+
 func (h *Memory) LocalConnections() int { return h.reg.count() }
 
 func (h *Memory) Drain(ctx context.Context, period time.Duration) {

@@ -6,11 +6,107 @@ import (
 	"github.com/google/uuid"
 )
 
+// User adalah seorang pengguna SEBAGAIMANA DILIHAT ORANG LAIN.
+//
+// Apa yang TIDAK ada di sini sama pentingnya dengan apa yang ada: email dan
+// keadaan verifikasinya tinggal di Me, dan pemisahan itu bukan kerapian. Bentuk
+// ini ikut di dalam hasil pencarian pengguna, di dalam `peer` pada daftar
+// percakapan, dan di dalam setiap siaran yang menyebut seseorang — tiga jalur
+// yang tidak satu pun punya alasan membawa alamat email siapa pun, dan tiga
+// jalur yang akan diam-diam membawanya begitu suatu hari ada yang menambahkan
+// satu field ke struct yang salah.
 type User struct {
 	ID          uuid.UUID `json:"id"`
 	Username    string    `json:"username"`
 	DisplayName string    `json:"displayName"`
 	CreatedAt   time.Time `json:"createdAt"`
+
+	// AvatarURL kosong berarti orang ini belum memasang foto; client
+	// menampilkan huruf pertama namanya, seperti sebelum Fase 10.
+	//
+	// Alamatnya memuat id unggahan, BUKAN id penggunanya — tiap penggantian foto
+	// menghasilkan alamat baru. Lihat AvatarURL.
+	AvatarURL string `json:"avatarUrl,omitempty"`
+
+	// Status adalah pernyataan yang dibuat orang dengan sengaja, dan dia BUKAN
+	// presence. Presence diturunkan dari koneksi yang hidup dan sengaja fana;
+	// ini bertahan melewati tutup laptop, ganti perangkat, dan logout.
+	//
+	// Yang sudah lewat `status_expires_at` tidak pernah sampai ke sini: seluruh
+	// pembacaan menyaringnya di dalam SQL — lihat userCols.
+	Status          string     `json:"status"`
+	StatusText      string     `json:"statusText,omitempty"`
+	StatusExpiresAt *time.Time `json:"statusExpiresAt,omitempty"`
+}
+
+// Me adalah pengguna sebagaimana dilihat DIRINYA SENDIRI.
+//
+// Satu-satunya bentuk yang membawa email, dan satu-satunya yang pernah dikirim
+// ke pemiliknya saja. Lihat catatan pemisahannya di User.
+type Me struct {
+	User
+
+	Email string `json:"email,omitempty"`
+
+	// EmailVerified false untuk alamat yang sudah diketik tapi belum dibuktikan
+	// kepemilikannya — dan alamat seperti itu tidak bisa dipakai memulihkan akun
+	// sama sekali. Kalau bisa, memulihkan akun orang lain cuma butuh mengaku
+	// memiliki sebuah alamat.
+	EmailVerified bool `json:"emailVerified"`
+}
+
+// Status yang boleh dipasang seseorang. 'available' adalah keadaan bawaan, dan
+// dia yang dikembalikan untuk status apa pun yang sudah lewat waktunya.
+const (
+	StatusAvailable = "available"
+	StatusBusy      = "busy"
+	StatusAway      = "away"
+)
+
+// AvatarURL menyusun alamat baca sebuah foto profil dari ID UNGGAHANNYA.
+//
+// Bukan dari id penggunanya, dan itu seluruh alasan kolom `avatar_id` ada.
+// Alamat tetap seperti /api/users/{id}/avatar berarti browser menyimpan foto
+// lama selama setahun dan tidak pernah lagi bertanya — orang mengganti fotonya,
+// dan tidak seorang pun melihatnya. Dengan id yang berganti tiap unggahan,
+// cache setahun kembali menjadi benar, bukan menjadi jebakan.
+func AvatarURL(avatarID uuid.UUID) string { return "/api/avatars/" + avatarID.String() }
+
+// StoredAvatar adalah foto profil beserta bagian yang tidak pernah dikirim ke
+// client: di mana byte-nya sebenarnya tersimpan. Dipisahkan dengan alasan yang
+// sama dengan StoredAttachment.
+type StoredAvatar struct {
+	ID   uuid.UUID
+	Key  string
+	MIME string
+	Size int64
+}
+
+// Session adalah satu perangkat yang sedang login.
+//
+// Token-nya sendiri tidak pernah ikut — yang tersimpan di database cuma
+// hash-nya sejak Fase 1, dan bahkan hash itu tidak dipakai sebagai nama publik.
+// Lihat catatan kolom `id` di 0007_akun_profil.sql.
+type Session struct {
+	ID         uuid.UUID  `json:"id"`
+	UserAgent  string     `json:"userAgent"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	LastSeenAt *time.Time `json:"lastSeenAt"`
+	ExpiresAt  time.Time  `json:"expiresAt"`
+
+	// Current menandai sesi yang sedang dipakai untuk bertanya. Client
+	// memakainya untuk tidak menawarkan tombol "cabut" yang akan mengeluarkan
+	// orangnya dari layar yang sedang dia buka.
+	Current bool `json:"current"`
+}
+
+// UserStatus adalah status seseorang tanpa sisa identitasnya — bentuk yang
+// disiarkan dan yang dikirim sebagai snapshot saat client menyambung.
+type UserStatus struct {
+	UserID    uuid.UUID  `json:"userId"`
+	Status    string     `json:"status"`
+	Text      string     `json:"text,omitempty"`
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 
 type Message struct {
@@ -204,6 +300,13 @@ type Member struct {
 	DisplayName string    `json:"displayName"`
 	Role        string    `json:"role"`
 	LastReadSeq int64     `json:"lastReadSeq"`
+
+	// AvatarURL ikut, status TIDAK. Anggota sebuah percakapan menurut definisi
+	// berbagi percakapan dengan pembacanya, jadi mereka sudah termasuk kontak —
+	// dan status kontak sudah datang lewat snapshot saat koneksi dibuka, lalu
+	// tetap segar lewat siaran. Menyalinnya ke sini juga berarti dua sumber
+	// untuk satu jawaban, dan yang satu ini membeku pada saat daftarnya diambil.
+	AvatarURL string `json:"avatarUrl,omitempty"`
 }
 
 // Conversation adalah bentuk yang dikirim ke client untuk daftar percakapan.

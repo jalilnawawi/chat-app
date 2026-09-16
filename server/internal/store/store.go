@@ -35,8 +35,75 @@ func isUniqueViolation(err error) bool {
 
 // ---------- users & sessions ----------
 
+// userCols adalah SATU-SATUNYA tempat bentuk publik seorang pengguna ditulis
+// sebagai SQL — alasannya sama dengan messageCols di bawah.
+//
+// Dua kolom terakhirnya bukan kolom, melainkan penyaring, dan di situlah
+// seluruh keputusan "durasi tidak dijaga timer" dilaksanakan: status yang sudah
+// lewat `status_expires_at` dibaca sebagai 'available' berteks kosong, di
+// SETIAP jalur baca sekaligus. Tidak ada job yang membersihkannya, tidak ada
+// penyapu lintas instance yang perlu dikunci, dan tidak ada satu pun jalur yang
+// bisa lupa menyaringnya — karena tidak ada satu pun jalur yang menulis daftar
+// kolom ini sendiri.
+func userCols(alias string) string {
+	a := ""
+	if alias != "" {
+		a = alias + "."
+	}
+	// "Masih berlaku" berarti tidak punya batas waktu, atau batasnya belum
+	// lewat. Jam yang dipakai adalah jam DATABASE, satu jam untuk semua
+	// instance — bukan jam proses yang kebetulan melayani permintaan ini.
+	hidup := a + "status_expires_at IS NULL OR " + a + "status_expires_at > now()"
+
+	// Ketiga ekspresi diberi nama lewat AS, dan itu bukan kerapian: sebuah
+	// CASE tanpa alias tidak punya nama kolom sama sekali, jadi subquery yang
+	// memuatnya tidak bisa dirujuk dari luar. Lihat userRefs.
+	return strings.Join([]string{
+		a + "id", a + "username", a + "display_name", a + "created_at", a + "avatar_id",
+		"CASE WHEN " + hidup + " THEN " + a + "status ELSE '" + StatusAvailable + "' END AS status",
+		"CASE WHEN " + hidup + " THEN " + a + "status_text ELSE '' END AS status_text",
+		"CASE WHEN " + a + "status_expires_at > now() THEN " + a + "status_expires_at END AS status_expires_at",
+	}, ", ")
+}
+
+// userRefs adalah userCols dilihat dari LUAR sebuah subquery: nama-nama
+// kolomnya saja, dalam urutan yang sama persis.
+//
+// Dipakai oleh ListConversations, yang membaca lawan bicara lewat LEFT JOIN
+// LATERAL — penyaringan statusnya sudah terjadi di dalam subquery-nya, dan
+// mengulangnya di luar berarti dua tempat yang harus tetap sepakat tentang satu
+// aturan.
+func userRefs(alias string) string {
+	return prefix(alias, "id", "username", "display_name", "created_at",
+		"avatar_id", "status", "status_text", "status_expires_at")
+}
+
+// userDest memasangkan tujuan Scan dengan userCols. Keduanya sengaja hidup
+// bersebelahan: daftar kolom dan urutan Scan yang terpisah adalah pasangan yang
+// suatu hari akan bergeser satu posisi tanpa satu pun peringatan compiler.
+func userDest(u *User, avatarID **uuid.UUID) []any {
+	return []any{
+		&u.ID, &u.Username, &u.DisplayName, &u.CreatedAt, avatarID,
+		&u.Status, &u.StatusText, &u.StatusExpiresAt,
+	}
+}
+
+func scanUser(row pgx.Row, u *User) error {
+	var avatarID *uuid.UUID
+	if err := row.Scan(userDest(u, &avatarID)...); err != nil {
+		return err
+	}
+	if avatarID != nil {
+		u.AvatarURL = AvatarURL(*avatarID)
+	}
+	return nil
+}
+
 func (s *Store) CreateUser(ctx context.Context, username, displayName, passwordHash string) (User, error) {
-	u := User{ID: uuid.New(), Username: username, DisplayName: displayName}
+	u := User{
+		ID: uuid.New(), Username: username, DisplayName: displayName,
+		Status: StatusAvailable,
+	}
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO users (id, username, display_name, password_hash)
 		VALUES ($1, $2, $3, $4)
@@ -53,49 +120,117 @@ func (s *Store) CreateUser(ctx context.Context, username, displayName, passwordH
 	return u, nil
 }
 
-// UserByUsername mengembalikan user beserta hash password-nya untuk verifikasi login.
-func (s *Store) UserByUsername(ctx context.Context, username string) (User, string, error) {
-	var u User
-	var hash string
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, username, display_name, password_hash, created_at
-		FROM users WHERE lower(username) = lower($1)`, username,
-	).Scan(&u.ID, &u.Username, &u.DisplayName, &hash, &u.CreatedAt)
+// UserByUsername mengembalikan user beserta hash password-nya untuk verifikasi
+// login.
+//
+// Mengembalikan Me, bukan User, karena pemanggilnya SATU-SATUNYA adalah jalur
+// login — dan jawaban login adalah jawaban kepada pemiliknya sendiri. Bentuk
+// publik di sana berarti halaman yang baru saja dibuka tidak tahu apakah akun
+// ini punya email, dan panel akunnya menampilkan kolom kosong sampai halamannya
+// dimuat ulang.
+func (s *Store) UserByUsername(ctx context.Context, username string) (Me, string, error) {
+	var (
+		me       Me
+		avatarID *uuid.UUID
+		email    *string
+		verified *time.Time
+		hash     string
+	)
+	dest := append(userDest(&me.User, &avatarID), &email, &verified, &hash)
+
+	err := s.pool.QueryRow(ctx,
+		`SELECT `+userCols("")+`, email, email_verified_at, password_hash
+		 FROM users WHERE lower(username) = lower($1)`, username,
+	).Scan(dest...)
 
 	if errors.Is(err, pgx.ErrNoRows) {
-		return User{}, "", ErrNotFound
+		return Me{}, "", ErrNotFound
 	}
 	if err != nil {
-		return User{}, "", fmt.Errorf("user by username: %w", err)
+		return Me{}, "", fmt.Errorf("user by username: %w", err)
 	}
-	return u, hash, nil
+
+	if avatarID != nil {
+		me.AvatarURL = AvatarURL(*avatarID)
+	}
+	if email != nil {
+		me.Email = *email
+	}
+	me.EmailVerified = verified != nil
+	return me, hash, nil
 }
 
-func (s *Store) CreateSession(ctx context.Context, tokenHash []byte, userID uuid.UUID, expiresAt time.Time) error {
+// CreateSession mencatat satu perangkat yang baru saja login.
+//
+// userAgent disalin apa adanya dari permintaannya, dan itu satu-satunya
+// petunjuk yang akan dimiliki orang saat melihat daftar sesinya nanti. Tanpa
+// dia, "sesi aktif" adalah daftar tanggal tanpa satu keterangan pun tentang
+// mana yang laptop kantor dan mana yang bukan miliknya.
+func (s *Store) CreateSession(
+	ctx context.Context,
+	tokenHash []byte,
+	userID uuid.UUID,
+	userAgent string,
+	expiresAt time.Time,
+) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)`,
-		tokenHash, userID, expiresAt)
+		INSERT INTO sessions (token_hash, user_id, user_agent, last_seen_at, expires_at)
+		VALUES ($1, $2, $3, now(), $4)`,
+		tokenHash, userID, userAgent, expiresAt)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) UserBySession(ctx context.Context, tokenHash []byte) (User, error) {
-	var u User
+// UserBySession menjawab "siapa pemilik cookie ini", dan sekaligus mencatat
+// bahwa sesinya baru saja dipakai.
+//
+// Penulisannya sengaja jarang: `last_seen_at` hanya dimajukan bila yang tercatat
+// sudah lebih dari lima menit lalu. Dijalankan pada SETIAP permintaan tanpa
+// syarat itu, dia akan mengubah jalur terpanas aplikasi — pemeriksaan sesi —
+// menjadi jalur tulis, dan ketelitian sampai detik yang dibelinya tidak pernah
+// ada yang membutuhkannya. Pola yang sama dengan MarkSubscriptionDelivered.
+//
+// CTE-nya berjalan lebih dulu dan tidak menghasilkan apa-apa untuk pembacaan di
+// bawahnya; keduanya menyaring baris yang sama lewat primary key.
+func (s *Store) UserBySession(ctx context.Context, tokenHash []byte) (Me, uuid.UUID, error) {
+	var (
+		me        Me
+		avatarID  *uuid.UUID
+		email     *string
+		verified  *time.Time
+		sessionID uuid.UUID
+	)
+	dest := append(userDest(&me.User, &avatarID), &email, &verified, &sessionID)
+
 	err := s.pool.QueryRow(ctx, `
-		SELECT u.id, u.username, u.display_name, u.created_at
+		WITH disentuh AS (
+			UPDATE sessions SET last_seen_at = now()
+			WHERE token_hash = $1 AND expires_at > now()
+			  AND (last_seen_at IS NULL OR last_seen_at < now() - interval '5 minutes')
+			RETURNING 1
+		)
+		SELECT `+userCols("u")+`, u.email, u.email_verified_at, s.id
 		FROM sessions s JOIN users u ON u.id = s.user_id
 		WHERE s.token_hash = $1 AND s.expires_at > now()`, tokenHash,
-	).Scan(&u.ID, &u.Username, &u.DisplayName, &u.CreatedAt)
+	).Scan(dest...)
 
 	if errors.Is(err, pgx.ErrNoRows) {
-		return User{}, ErrNotFound
+		return Me{}, uuid.Nil, ErrNotFound
 	}
 	if err != nil {
-		return User{}, fmt.Errorf("user by session: %w", err)
+		return Me{}, uuid.Nil, fmt.Errorf("user by session: %w", err)
 	}
-	return u, nil
+
+	if avatarID != nil {
+		me.AvatarURL = AvatarURL(*avatarID)
+	}
+	if email != nil {
+		me.Email = *email
+	}
+	me.EmailVerified = verified != nil
+	return me, sessionID, nil
 }
 
 func (s *Store) DeleteSession(ctx context.Context, tokenHash []byte) error {
@@ -106,7 +241,7 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash []byte) error {
 // SearchUsers dipakai untuk memilih lawan bicara saat memulai percakapan baru.
 func (s *Store) SearchUsers(ctx context.Context, query string, exclude uuid.UUID, limit int) ([]User, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, username, display_name, created_at
+		SELECT `+userCols("")+`
 		FROM users
 		WHERE id <> $1 AND (username ILIKE $2 OR display_name ILIKE $2)
 		ORDER BY username LIMIT $3`,
@@ -119,7 +254,7 @@ func (s *Store) SearchUsers(ctx context.Context, query string, exclude uuid.UUID
 	users := []User{}
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Username, &u.DisplayName, &u.CreatedAt); err != nil {
+		if err := scanUser(rows, &u); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
@@ -238,6 +373,46 @@ func (s *Store) CreateGroup(ctx context.Context, creator uuid.UUID, title string
 	return id, nil
 }
 
+// peerScan menampung lawan bicara sebuah DM yang datang lewat LEFT JOIN
+// LATERAL: kalau barisnya tidak ada — dan untuk grup dia memang tidak pernah
+// ada — SELURUH kolomnya NULL sekaligus, jadi tidak satu pun boleh di-scan
+// langsung ke field User.
+//
+// Ditulis sebagai tipe tersendiri, bukan delapan variabel lepas di dalam loop,
+// karena daftarnya tumbuh bersama userCols dan dua daftar yang harus sama
+// panjang lebih baik hidup berdekatan daripada berjauhan.
+type peerScan struct {
+	id       *uuid.UUID
+	username *string
+	name     *string
+	created  *time.Time
+	avatarID *uuid.UUID
+	status   *string
+	text     *string
+	expires  *time.Time
+}
+
+func (p *peerScan) dest() []any {
+	return []any{
+		&p.id, &p.username, &p.name, &p.created,
+		&p.avatarID, &p.status, &p.text, &p.expires,
+	}
+}
+
+func (p *peerScan) user() *User {
+	if p.id == nil {
+		return nil
+	}
+	u := &User{
+		ID: *p.id, Username: *p.username, DisplayName: *p.name, CreatedAt: *p.created,
+		Status: *p.status, StatusText: *p.text, StatusExpiresAt: p.expires,
+	}
+	if p.avatarID != nil {
+		u.AvatarURL = AvatarURL(*p.avatarID)
+	}
+	return u
+}
+
 // ListConversations mengembalikan percakapan milik user, terbaru di atas,
 // lengkap dengan pesan terakhir dan jumlah belum dibaca dalam satu query.
 func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conversation, error) {
@@ -246,7 +421,7 @@ func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conv
 		       cm.mention_seq, cm.mention_ack_seq,
 		       lm.id, lm.seq, lm.sender_id, lm.body, lm.attachments,
 		       lm.created_at, lm.edited_at, lm.deleted_at, lm.kind, lm.system_event,
-		       peer.id, peer.username, peer.display_name, peer.created_at
+		       `+userRefs("peer")+`
 		FROM conversation_members cm
 		JOIN conversations c ON c.id = cm.conversation_id
 		LEFT JOIN LATERAL (
@@ -256,7 +431,7 @@ func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conv
 			ORDER BY seq DESC LIMIT 1
 		) lm ON true
 		LEFT JOIN LATERAL (
-			SELECT u.id, u.username, u.display_name, u.created_at
+			SELECT `+userCols("u")+`
 			FROM conversation_members other
 			JOIN users u ON u.id = other.user_id
 			WHERE other.conversation_id = c.id AND other.user_id <> cm.user_id
@@ -272,30 +447,27 @@ func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conv
 	out := []Conversation{}
 	for rows.Next() {
 		var (
-			c        Conversation
-			created  time.Time
-			msgID    *uuid.UUID
-			msgSeq   *int64
-			msgFrom  *uuid.UUID
-			msgBody  *string
-			msgAtt   []Attachment
-			msgAt    *time.Time
-			msgEdit  *time.Time
-			msgDel   *time.Time
-			msgKind  *string
-			msgSys   *SystemEvent
-			peerID   *uuid.UUID
-			peerUser *string
-			peerName *string
-			peerAt   *time.Time
+			c       Conversation
+			created time.Time
+			msgID   *uuid.UUID
+			msgSeq  *int64
+			msgFrom *uuid.UUID
+			msgBody *string
+			msgAtt  []Attachment
+			msgAt   *time.Time
+			msgEdit *time.Time
+			msgDel  *time.Time
+			msgKind *string
+			msgSys  *SystemEvent
+			peer    peerScan
 		)
-		if err := rows.Scan(
+		dest := append([]any{
 			&c.ID, &c.Type, &c.Title, &c.LastSeq, &c.LastReadSeq, &created,
 			&c.MentionSeq, &c.MentionAckSeq,
 			&msgID, &msgSeq, &msgFrom, &msgBody, &msgAtt, &msgAt, &msgEdit, &msgDel,
 			&msgKind, &msgSys,
-			&peerID, &peerUser, &peerName, &peerAt,
-		); err != nil {
+		}, peer.dest()...)
+		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
 
@@ -316,9 +488,7 @@ func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conv
 			}
 			c.UpdatedAt = *msgAt
 		}
-		if peerID != nil {
-			c.Peer = &User{ID: *peerID, Username: *peerUser, DisplayName: *peerName, CreatedAt: *peerAt}
-		}
+		c.Peer = peer.user()
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -354,9 +524,26 @@ func (s *Store) MemberIDs(ctx context.Context, convID uuid.UUID) ([]uuid.UUID, e
 	return ids, rows.Err()
 }
 
+// memberCols dan scanMember dipakai bersama oleh Members (lewat pool) dan
+// membersIn di group.go (lewat transaksi yang sedang berjalan). Keduanya
+// menjawab pertanyaan yang sama dan tidak boleh pernah menjawabnya berbeda.
+const memberCols = `u.id, u.username, u.display_name, u.avatar_id, cm.role, cm.last_read_seq`
+
+func scanMember(row pgx.Row, m *Member) error {
+	var avatarID *uuid.UUID
+	if err := row.Scan(&m.UserID, &m.Username, &m.DisplayName, &avatarID,
+		&m.Role, &m.LastReadSeq); err != nil {
+		return err
+	}
+	if avatarID != nil {
+		m.AvatarURL = AvatarURL(*avatarID)
+	}
+	return nil
+}
+
 func (s *Store) Members(ctx context.Context, convID uuid.UUID) ([]Member, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT u.id, u.username, u.display_name, cm.role, cm.last_read_seq
+		SELECT `+memberCols+`
 		FROM conversation_members cm JOIN users u ON u.id = cm.user_id
 		WHERE cm.conversation_id = $1
 		ORDER BY u.display_name`, convID)
@@ -368,7 +555,7 @@ func (s *Store) Members(ctx context.Context, convID uuid.UUID) ([]Member, error)
 	out := []Member{}
 	for rows.Next() {
 		var m Member
-		if err := rows.Scan(&m.UserID, &m.Username, &m.DisplayName, &m.Role, &m.LastReadSeq); err != nil {
+		if err := scanMember(rows, &m); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

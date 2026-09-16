@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -117,6 +118,48 @@ func (r *registry) deliver(targets []uuid.UUID, payload []byte) (receivers int) 
 		c.Close()
 	}
 	return receivers
+}
+
+// revoke menutup koneksi lokal milik userID, disaring oleh salah satu dari dua
+// penyaring yang berlawanan: `keep` menyisakan satu sesi, `only` menutup satu
+// sesi. Keduanya nil berarti seluruh koneksi milik user itu.
+//
+// Payload perpisahannya disusun di sini, sekali, lalu dibagikan — dan dia
+// dikirim lewat Kick, bukan Enqueue lalu Close: yang kedua kehilangan pesannya
+// lebih sering daripada tidak. Lihat catatan di Sink.Kick.
+//
+// Yang TIDAK dilakukan: melepas koneksi dari registry. Pelepasan tetap satu
+// tempat saja — defer di ws.Handler.Serve — dengan alasan yang sama persis
+// seperti pada deliver di atas.
+func (r *registry) revoke(userID uuid.UUID, keep, only []byte) (closed int) {
+	notice, err := json.Marshal(Event{
+		Type:    EventSessionRevoked,
+		Payload: map[string]any{"reason": "session_revoked"},
+	})
+	if err != nil {
+		return 0
+	}
+
+	r.mu.RLock()
+	var doomed []Sink
+	for c := range r.clients[userID] {
+		if keep != nil && bytes.Equal(c.SessionHash(), keep) {
+			continue
+		}
+		if only != nil && !bytes.Equal(c.SessionHash(), only) {
+			continue
+		}
+		doomed = append(doomed, c)
+	}
+	r.mu.RUnlock()
+
+	for _, c := range doomed {
+		c.Kick(notice)
+	}
+	if len(doomed) > 0 {
+		r.log.Info("sesi dicabut, koneksi ditutup", "user", userID, "koneksi", len(doomed))
+	}
+	return len(doomed)
 }
 
 // onlineLocal menyaring ids ke yang punya koneksi di instance ini.

@@ -3,8 +3,9 @@
 Aplikasi chat realtime. Go + PostgreSQL di backend, Bun + React di frontend.
 Mendukung DM 1-on-1 dan grup, presence, typing indicator, read receipt, edit &
 hapus pesan, lampiran berkas, membalas pesan, menyebut orang (@), reaksi emoji,
-kelola grup (tambah/keluarkan anggota, ganti judul, pindah pemilik), serta push
-notification untuk yang sedang tidak membuka aplikasi.
+kelola grup (tambah/keluarkan anggota, ganti judul, pindah pemilik), kelola akun
+(foto profil, email terverifikasi, ganti & pulihkan password, daftar perangkat,
+status), serta push notification untuk yang sedang tidak membuka aplikasi.
 
 Status: **MVP jalan end-to-end, dan sudah diuji untuk 1000 koneksi bersamaan.**
 Catatan operasional multi-instance ada di [docs/scaling.md](docs/scaling.md);
@@ -13,14 +14,16 @@ keputusan seputar lampiran dan notifikasi di
 permintaan sepotong di
 [docs/thumbnail-dan-range.md](docs/thumbnail-dan-range.md); membalas, menyebut,
 dan bereaksi di [docs/balas-sebut-reaksi.md](docs/balas-sebut-reaksi.md);
-pengelolaan grup di [docs/kelola-grup.md](docs/kelola-grup.md).
+pengelolaan grup di [docs/kelola-grup.md](docs/kelola-grup.md); pengelolaan akun
+dan profil di [docs/kelola-akun.md](docs/kelola-akun.md).
 
 ## Menjalankan
 
 Butuh Go 1.26+, Bun, dan Docker.
 
 ```bash
-# 1. Infrastruktur: Postgres, Redis (multi-instance), SeaweedFS (lampiran)
+# 1. Infrastruktur: Postgres, Redis (multi-instance), SeaweedFS (lampiran),
+#    Mailpit (penampung surat untuk pengembangan, dibaca di :8025)
 docker compose up -d
 
 # 2. Backend (migrasi jalan otomatis saat start)
@@ -30,14 +33,15 @@ cd server && go run ./cmd/server        # http://localhost:8090
 cd web && bun install && bun run dev    # http://localhost:5174
 ```
 
-Tiga bagian bisa dimatikan lewat satu variabel lingkungan, dan aplikasi tetap
-utuh sebagai chat tanpa ketiganya:
+Empat bagian bisa dimatikan lewat satu variabel lingkungan, dan aplikasi tetap
+utuh sebagai chat tanpa keempatnya:
 
 | Kosongkan | Akibatnya |
 |---|---|
 | `REDIS_URL` | Satu instance: hub dan rate limit memakai memori proses |
-| `SEAWEED_FILER_URL` | Lampiran mati, tombolnya hilang dari UI |
+| `SEAWEED_FILER_URL` | Lampiran DAN foto profil mati, tombolnya hilang dari UI |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Notifikasi mati, tombolnya hilang |
+| `SMTP_URL` | Verifikasi email dan pemulihan password mati; sisa aplikasi utuh |
 
 Itu mode yang paling enak untuk pengembangan: `go run` cukup untuk menjalankan
 seluruh aplikasi. Untuk beberapa instance sekaligus, lihat
@@ -93,6 +97,9 @@ web/
 docs/scaling.md        catatan operasional multi-instance
 docs/lampiran-dan-push.md  keputusan seputar lampiran dan notifikasi
 docs/thumbnail-dan-range.md  turunan gambar dan permintaan sepotong
+docs/balas-sebut-reaksi.md  membalas, menyebut, dan bereaksi
+docs/kelola-grup.md    pengelolaan grup
+docs/kelola-akun.md    akun, profil, sesi, dan status
 ```
 
 ## Keputusan desain
@@ -212,13 +219,35 @@ Rentang yang bentuknya tidak dikenali diabaikan (kirim utuh); yang menunjuk ke
 luar berkas dijawab 416. Uraiannya di
 [docs/thumbnail-dan-range.md](docs/thumbnail-dan-range.md).
 
+## Kemampuan server
+
+```
+GET    /api/config    { attachments, thumbnails, avatars, push, mail, vapidPublicKey }
+```
+
+Bagian mana yang menyala di instance ini. **Tanpa sesi**, karena halaman masuk
+sudah membutuhkannya sebelum siapa pun login: tombol "Lupa password?" yang
+ditampilkan pada server tanpa SMTP mengantar orang ke jalan buntu, dan orang
+yang lupa password adalah orang yang paling tidak punya cadangan kesabaran.
+
+Gunanya satu: **tombol yang pasti ditolak tidak pernah ditampilkan.** Itu aturan
+yang sudah dipakai panel kelola grup — tombol yang bukan hak seseorang tidak
+ditampilkan kepadanya, bukan ditampilkan lalu ditolak server. Tombol yang selalu
+ada tapi kadang gagal mengajari orang bahwa pesan kesalahan di aplikasi ini boleh
+diabaikan, dan pelajaran itu terbawa ke pesan kesalahan yang benar-benar penting.
+
+Jawabannya datang dari `Server.features()`, method yang sama yang mengisi
+`/healthz`. Dua daftar yang disusun sendiri-sendiri adalah dua daftar yang suatu
+hari akan berbeda pendapat tentang apa yang sedang menyala.
+
 ## Notifikasi
 
 ```
-GET    /api/push/config           { enabled, publicKey }
 POST   /api/push/subscribe        langganan dari browser
 POST   /api/push/unsubscribe      { endpoint }
 ```
+
+Kunci publik VAPID ikut di `/api/config` di atas, bukan di endpoint sendiri.
 
 Balas, sebut, dan reaksi:
 
@@ -255,6 +284,58 @@ ruangnya dibuka, sedangkan sebutan baru padam setelah pesan yang memanggil
 namanya benar-benar terlihat di layar. Satu endpoint untuk keduanya berarti
 membuka percakapan sekilas sudah cukup untuk melupakan bahwa ada yang memanggil.
 
+## Akun & profil
+
+```
+PATCH  /api/account                  { displayName }
+PUT    /api/account/status           { status, text, expiresAt }
+POST   /api/account/password         { currentPassword, newPassword }
+POST   /api/account/email            { email, currentPassword }
+POST   /api/account/email/verify     kirim ulang tautan verifikasi
+GET    /api/account/sessions         daftar perangkat yang sedang masuk
+DELETE /api/account/sessions/{id}    cabut satu perangkat
+POST   /api/account/avatar           multipart, satu berkas gambar
+DELETE /api/account/avatar
+GET    /api/avatars/{id}             byte fotonya
+
+POST   /api/auth/verify-email        { token }      tanpa sesi
+POST   /api/auth/forgot-password     { email }      tanpa sesi
+POST   /api/auth/reset-password      { token, password }   tanpa sesi
+```
+
+Empat keputusan yang menentukan bentuknya. Uraian lengkap di
+[docs/kelola-akun.md](docs/kelola-akun.md).
+
+**Status bukan presence.** Presence diturunkan dari koneksi yang hidup, disimpan
+di Redis, dan sengaja fana. Status adalah pernyataan yang dibuat orang dengan
+sengaja, tinggal di Postgres, dan bertahan melewati tutup laptop serta logout.
+Menyatukan keduanya berarti "busy sampai jam 1" lenyap begitu tabnya ditutup.
+Durasinya tidak dijaga timer apa pun — pembacaan yang menyaring sendiri, dan
+penyaringnya ditulis satu kali di `userCols()` sehingga tidak ada jalur baca
+yang bisa lupa memakainya. `busy` meredam push; sebutan tetap menembusnya.
+
+**Alamat foto profil berubah setiap fotonya berubah.** Cache setahun bertanda
+`immutable` benar untuk byte lampiran, tapi avatar berubah — alamat tetap
+berarti browser menyimpan foto lama selama setahun dan tidak pernah lagi
+bertanya. Jadi tiap unggahan menghasilkan id baru (`/api/avatars/{id}`), dan
+cache setahun kembali menjadi benar. Berkas aslinya dibuang setelah diperkecil.
+
+**Mengubah kredensial menuntut password saat ini**, bukan sekadar sesi yang
+masih hidup: sesi bisa saja milik laptop yang ditinggal terbuka. Berlaku untuk
+email maupun password, karena alamat email adalah jalan masuk kedua ke sebuah
+akun.
+
+**Ganti password benar-benar memutus koneksinya.** Menghapus baris di `sessions`
+saja tidak cukup — koneksi WebSocket yang sudah terbuka dipegang di memori
+proses, dan proses itu bisa instance lain. `hub.Broadcaster` punya dua method
+untuk itu, lewat channel kendali Redis terpisah yang tidak pernah disentuh oleh
+pesan chat biasa.
+
+Email yang **belum terverifikasi tidak bisa memulihkan akun sama sekali**: kalau
+bisa, memulihkan akun orang lain cuma butuh mendaftar dengan alamat mereka.
+`/api/auth/forgot-password` selalu menjawab 200 yang sama persis, terdaftar atau
+tidak.
+
 ## Protokol WebSocket
 
 Client -> server:
@@ -278,6 +359,10 @@ Server -> client:
 | `typing` | `{ conversationId, userId, displayName, typing }` |
 | `presence` | `{ userId, online }` |
 | `presence.snapshot` | `{ online: string[] }` |
+| `status` | `{ userId, status, text, expiresAt }` — status yang dinyatakan orang DENGAN SENGAJA, dan dia bukan presence: dia bertahan melewati logout |
+| `status.snapshot` | `{ statuses: [...] }` — hanya yang BUKAN bawaan; 'available' tanpa teks tidak pernah dikirim |
+| `user.updated` | objek User — nama atau foto berubah. Alamat avatar memuat id unggahan, jadi dia berubah tiap foto diganti, dan event ini yang membuat alamat barunya sampai |
+| `session.revoked` | `{ reason }` — sesi koneksi INI dicabut; koneksinya ditutup tepat setelah frame ini |
 | `sync.batch` | `{ conversationId, messages: Message[] }` — susulan setelah reconnect, berkelompok |
 | `reaction.added` / `reaction.removed` | `{ conversationId, messageId, userId, emoji, reactionSeq }` — SELISIH, bukan ringkasan: ringkasan memuat "apakah aku ikut", dan siaran satu payload untuk semua orang |
 | `reaction.batch` | `{ conversationId, messages: [{ messageId, reactionSeq, reactions }] }` — susulan reaksi, dikirim ke satu koneksi jadi ringkasannya boleh lengkap |
@@ -287,9 +372,12 @@ Server -> client:
 
 ## Kuota
 
-Setiap user punya token bucket sendiri untuk kirim pesan, buka koneksi, dan
-event typing; login/register dibatasi per alamat IP karena argon2id sengaja
-mahal. Semua batas diatur lewat env (lihat `.env.example`).
+Setiap user punya token bucket sendiri untuk kirim pesan, buka koneksi, event
+typing, reaksi, pengelolaan grup, dan perubahan akun; login/register dibatasi per
+alamat IP karena argon2id sengaja mahal. Pemulihan password punya kuotanya
+sendiri — yang dibatasi di sana bukan biaya argon2 melainkan kemampuan seseorang
+membanjiri kotak masuk orang lain. Semua batas diatur lewat env (lihat
+`.env.example`).
 
 Server yang menolak membalas **429** dengan header `Retry-After`. Client menunggu
 selama itu lalu mencoba sekali lagi diam-diam — aman justru karena id pesan
@@ -329,6 +417,15 @@ dibuat baru dalam schema tersendiri lalu dibuang.
 **Dilewati otomatis bila databasenya tidak ada**, supaya `go test ./...` tetap
 hijau di mesin yang belum menyalakan docker — test yang tidak pernah dijalankan
 tidak melindungi apa pun.
+
+Fase 10 menambah 22 test store lagi, dan yang terbanyak di antaranya untuk satu
+hal yang paling sulit dilihat dengan membuka halamannya: **status yang
+kedaluwarsa.** Dia tidak dibersihkan oleh apa pun, jadi satu-satunya yang
+membuatnya tidak terlihat adalah penyaring di dalam SQL — dan penyaring yang
+terlewat di satu jalur baca tidak akan pernah mengeluh, dia cuma menampilkan
+"sedang rapat sampai 13.00" pada pukul empat sore. Ditambah 4 test hub untuk
+pencabutan sesi (yang menyisakan satu perangkat, dan yang menutup satu) serta 3
+test push untuk peredam status.
 
 ```bash
 docker compose up -d postgres

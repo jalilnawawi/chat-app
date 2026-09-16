@@ -1,4 +1,15 @@
-import type { Attachment, Conversation, Member, Message, PushConfig, User } from './types';
+import type {
+  Attachment,
+  Conversation,
+  Me,
+  Member,
+  Message,
+  ServerConfig,
+  Session,
+  StatusKind,
+  User,
+  UserStatus,
+} from './types';
 
 /**
  * Bagian pesan yang bukan teks maupun lampiran.
@@ -32,6 +43,17 @@ const BASE = import.meta.env.VITE_API_URL ?? '';
  * konfigurasi dan tidak terlihat sama sekali di konfigurasi lainnya.
  */
 export const attachmentURL = (url: string) => (BASE ? BASE + url : url);
+
+/**
+ * Alamat lengkap sebuah foto profil.
+ *
+ * Fungsi yang sama bentuknya dengan attachmentURL, dan sengaja tidak digabung:
+ * keduanya kebetulan sama HARI INI, tapi izin bacanya berbeda — avatar boleh
+ * dilihat siapa pun yang sudah login, lampiran hanya oleh anggota percakapannya.
+ * Dua aturan yang berbeda layak punya dua nama, supaya yang satu tidak ikut
+ * berubah saat yang lain diubah.
+ */
+export const avatarURL = (url: string) => (BASE ? BASE + url : url);
 
 export const wsURL = () => {
   if (BASE) return BASE.replace(/^http/, 'ws') + '/ws';
@@ -81,14 +103,91 @@ const post = <T,>(path: string, body?: unknown) =>
 
 export const api = {
   register: (username: string, displayName: string, password: string) =>
-    post<User>('/api/auth/register', { username, displayName, password }),
+    post<Me>('/api/auth/register', { username, displayName, password }),
 
-  login: (username: string, password: string) =>
-    post<User>('/api/auth/login', { username, password }),
+  login: (username: string, password: string) => post<Me>('/api/auth/login', { username, password }),
 
   logout: () => post<{ status: string }>('/api/auth/logout'),
 
-  me: () => request<User>('/api/auth/me'),
+  me: () => request<Me>('/api/auth/me'),
+
+  // ---- kelola akun & profil ----
+
+  updateProfile: (displayName: string) =>
+    request<Me>('/api/account', { method: 'PATCH', body: JSON.stringify({ displayName }) }),
+
+  /**
+   * Memasang status.
+   *
+   * `expiresAt` adalah INSTAN ABSOLUT yang dihitung DI SINI dari pilihan cepat
+   * orangnya, bukan durasi yang dikirim ke server. Hanya client yang tahu zona
+   * waktu pemakainya, dan "sampai akhir hari" adalah pertanyaan yang cuma bisa
+   * dijawab di sini — pukul 23.59 di Jakarta adalah tengah hari di tempat lain.
+   */
+  setStatus: (status: StatusKind, text: string, expiresAt: string | null) =>
+    request<UserStatus>('/api/account/status', {
+      method: 'PUT',
+      body: JSON.stringify({ status, text, expiresAt }),
+    }),
+
+  /** Menuntut password saat ini: sesi bisa saja milik laptop yang ditinggal terbuka. */
+  changePassword: (currentPassword: string, newPassword: string) =>
+    post<{ status: string }>('/api/account/password', { currentPassword, newPassword }),
+
+  setEmail: (email: string, currentPassword: string) =>
+    post<Me>('/api/account/email', { email, currentPassword }),
+
+  resendVerification: () => post<{ status: string }>('/api/account/email/verify'),
+
+  verifyEmail: (token: string) => post<{ email: string }>('/api/auth/verify-email', { token }),
+
+  /**
+   * Jawabannya selalu sama, terdaftar atau tidak — membedakannya mengubah
+   * endpoint ini jadi alat untuk menanyai server siapa saja yang punya akun.
+   */
+  forgotPassword: (email: string) => post<{ status: string }>('/api/auth/forgot-password', { email }),
+
+  resetPassword: (token: string, password: string) =>
+    post<{ status: string }>('/api/auth/reset-password', { token, password }),
+
+  sessions: () => request<Session[]>('/api/account/sessions'),
+
+  revokeSession: (id: string) =>
+    request<{ status: string }>(`/api/account/sessions/${id}`, { method: 'DELETE' }),
+
+  removeAvatar: () => request<Me>('/api/account/avatar', { method: 'DELETE' }),
+
+  /**
+   * Mengunggah foto profil.
+   *
+   * Memakai XMLHttpRequest dengan alasan yang sama dengan uploadAttachment:
+   * fetch tidak punya cara melaporkan kemajuan unggahan sama sekali.
+   */
+  uploadAvatar: (file: File, onProgress: (fraction: number) => void): Promise<Me> =>
+    new Promise((resolve, reject) => {
+      const form = new FormData();
+      form.append('file', file, file.name);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${BASE}/api/account/avatar`);
+      xhr.withCredentials = true;
+      xhr.responseType = 'json';
+
+      xhr.upload.onprogress = e => {
+        if (e.lengthComputable) onProgress(e.loaded / e.total);
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          onProgress(1);
+          resolve(xhr.response as Me);
+          return;
+        }
+        const body = xhr.response as { error?: string } | null;
+        reject(new ApiError(xhr.status, body?.error ?? 'Unggahan gagal'));
+      };
+      xhr.onerror = () => reject(new ApiError(0, 'Jaringan bermasalah saat mengunggah'));
+      xhr.send(form);
+    }),
 
   searchUsers: (q: string) => request<User[]>(`/api/users?q=${encodeURIComponent(q)}`),
 
@@ -178,7 +277,11 @@ export const api = {
       xhr.send(form);
     }),
 
-  pushConfig: () => request<PushConfig>('/api/push/config'),
+  /**
+   * Apa yang bisa dilakukan server ini. Tanpa sesi: halaman masuk sudah
+   * membutuhkannya untuk memutuskan apakah "Lupa password?" pantas ditawarkan.
+   */
+  serverConfig: () => request<ServerConfig>('/api/config'),
 
   pushSubscribe: (sub: PushSubscriptionJSON) =>
     post<{ status: string }>('/api/push/subscribe', {

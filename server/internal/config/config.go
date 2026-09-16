@@ -93,6 +93,41 @@ type Config struct {
 	// bila server ini bermasalah. Wajib berupa mailto: atau https:.
 	VAPIDSubject string
 
+	// ---- akun & profil (Fase 10) ----
+
+	// SMTPURL kosong berarti fitur email MATI dan aplikasinya tetap utuh: orang
+	// masih bisa mendaftar, login, dan memakai seluruh chat — yang tidak ada
+	// cuma verifikasi alamat dan pemulihan password lewat tautan.
+	//
+	// Pola yang sama persis dengan REDIS_URL, SEAWEED_FILER_URL, dan kunci
+	// VAPID. Bentuknya "smtp://user:sandi@host:587" (STARTTLS) atau
+	// "smtps://..." (TLS sejak byte pertama).
+	SMTPURL string
+
+	// MailFrom adalah alamat pengirim yang akan dilihat orang. Wajib diisi bila
+	// SMTP_URL diisi — surat tanpa pengirim yang jelas adalah surat yang
+	// berakhir di folder spam.
+	MailFrom string
+
+	// AppURL adalah awalan alamat yang dipakai menyusun tautan di dalam email.
+	// Tidak bisa diturunkan dari permintaan HTTP: surat verifikasi dikirim dari
+	// proses yang sama, tapi tautannya harus tetap benar kalau suatu hari
+	// dikirim oleh job yang tidak punya permintaan sama sekali.
+	AppURL string
+
+	// AvatarMaxDim adalah panjang sisi terpanjang foto profil setelah
+	// diperkecil. Kecil dengan sengaja: avatar tidak pernah ditampilkan lebih
+	// lebar dari beberapa puluh piksel, dan yang aslinya DIBUANG — menyimpan
+	// foto dua belas megapiksel berarti membayar selamanya untuk sesuatu yang
+	// tidak akan pernah dilihat pada ukuran itu.
+	AvatarMaxDim int
+
+	// AvatarMaxBytes membatasi berkas yang diterima jalur avatar. Jauh lebih
+	// kecil dari MAX_UPLOAD_BYTES karena yang masuk ke sini SELALU dibentangkan
+	// di memori untuk diperkecil — tidak ada jalur "simpan apa adanya" seperti
+	// pada lampiran.
+	AvatarMaxBytes int64
+
 	// ---- shutdown bertahap ----
 	// DrainDelay: jeda antara /readyz mulai menjawab 503 dan koneksi mulai
 	// ditutup. Load balancer butuh beberapa detik untuk berhenti mengirim
@@ -119,6 +154,18 @@ type Config struct {
 	// bukan dilarang — yang tidak boleh adalah mengulanginya tiap beberapa
 	// detik.
 	MentionAllRate ratelimit.Rule
+	// ProfileRate membatasi perubahan akun: nama, status, email, dan password.
+	// Ketat bukan karena mahal di server, melainkan karena tiap perubahan status
+	// disiarkan ke SELURUH kontak — dan orang yang menggeser statusnya
+	// bolak-balik tiap detik sedang mengisi layar orang lain.
+	ProfileRate ratelimit.Rule
+
+	// EmailRate membatasi jalur yang menyuruh server MENGIRIM SURAT. Satu
+	// permintaan di sini berakhir di kotak masuk orang sungguhan, dan yang
+	// dibatasi bukan beban server melainkan kemampuan satu orang membanjiri
+	// alamat orang lain dengan tautan yang tidak dia minta.
+	EmailRate ratelimit.Rule
+
 	// GroupRate membatasi pengelolaan grup. Tiap tindakan menulis catatan
 	// sistem ke riwayat semua anggota sekaligus menyiarkan dua event, jadi yang
 	// dibatasi di sini bukan beban server melainkan kemampuan satu orang
@@ -148,11 +195,20 @@ func Load() (Config, error) {
 		VAPIDPublicKey:  os.Getenv("VAPID_PUBLIC_KEY"),
 		VAPIDPrivateKey: os.Getenv("VAPID_PRIVATE_KEY"),
 		VAPIDSubject:    env("VAPID_SUBJECT", "mailto:admin@example.com"),
+
+		SMTPURL:  os.Getenv("SMTP_URL"),
+		MailFrom: os.Getenv("MAIL_FROM"),
 	}
 
 	if len(c.AllowedOrigins) == 0 {
 		return Config{}, fmt.Errorf("ALLOWED_ORIGIN kosong")
 	}
+
+	// Bawaannya origin pertama yang diizinkan. Itu hampir selalu benar — dia
+	// memang alamat tempat aplikasi ini dibuka — dan membuat pengembangan lokal
+	// tidak menuntut satu variabel lagi hanya untuk menghasilkan tautan yang
+	// sudah jelas.
+	c.AppURL = strings.TrimRight(env("APP_URL", c.AllowedOrigins[0]), "/")
 
 	var err error
 	if c.SecureCookie, err = envBool("SECURE_COOKIE", false); err != nil {
@@ -200,6 +256,24 @@ func Load() (Config, error) {
 	if c.ThumbConcurrency < 1 {
 		return Config{}, fmt.Errorf("THUMBNAIL_CONCURRENCY harus positif")
 	}
+
+	// 256 piksel: dua kali lipat ukuran avatar terbesar yang ditampilkan
+	// aplikasi ini, jadi layar ber-DPI tinggi tetap tajam, dan tetap sekitar
+	// dua ribu kali lebih kecil daripada foto kamera ponsel.
+	if c.AvatarMaxDim, err = envInt("AVATAR_MAX_DIM", 256); err != nil {
+		return Config{}, err
+	}
+	if c.AvatarMaxDim < 32 || c.AvatarMaxDim > 1024 {
+		return Config{}, fmt.Errorf("AVATAR_MAX_DIM harus antara 32 dan 1024")
+	}
+	maxAvatar, err := envInt("AVATAR_MAX_BYTES", 5<<20)
+	if err != nil {
+		return Config{}, err
+	}
+	if maxAvatar < 1 {
+		return Config{}, fmt.Errorf("AVATAR_MAX_BYTES harus positif")
+	}
+	c.AvatarMaxBytes = int64(maxAvatar)
 
 	maxConns, err := envInt("DB_MAX_CONNS", 0)
 	if err != nil {
@@ -259,6 +333,18 @@ func Load() (Config, error) {
 	if c.GroupRate, err = envRule("RATE_GROUP", 10, 30); err != nil {
 		return Config{}, err
 	}
+	// Mengganti nama atau status adalah tindakan sesekali. Dua puluh beruntun
+	// cukup untuk mencoba-coba pilihan status dalam sekali duduk, enam puluh per
+	// menit jauh di atas kecepatan orang membaca akibatnya di layar sendiri.
+	if c.ProfileRate, err = envRule("RATE_PROFILE", 20, 60); err != nil {
+		return Config{}, err
+	}
+	// Tiga surat beruntun, lalu satu tiap dua menit. Angkanya dipilih dari
+	// perilaku orang yang tautannya belum sampai dan menekan "kirim ulang"
+	// beberapa kali — bukan dari kemampuan server mengirim.
+	if c.EmailRate, err = envRule("RATE_EMAIL", 3, 0.5); err != nil {
+		return Config{}, err
+	}
 	// Satu dering per percakapan tiap 30 detik, dengan kelonggaran dua di awal
 	// supaya kabar pertama tidak pernah tertelan. Angkanya dipilih dari cara
 	// orang membalas pesan, bukan dari kemampuan server mengirim.
@@ -270,6 +356,13 @@ func Load() (Config, error) {
 	// akibatnya adalah fitur yang diam-diam mati padahal terlihat dikonfigurasi.
 	// Lebih baik gagal saat start daripada baru ketahuan saat seseorang
 	// mengeluh notifikasinya tidak pernah datang.
+	// Satu variabel terisi dan pasangannya kosong hampir selalu berarti salah
+	// salin — dan akibatnya adalah tautan verifikasi yang tidak pernah sampai,
+	// dengan server yang terlihat baik-baik saja.
+	if c.SMTPURL != "" && c.MailFrom == "" {
+		return Config{}, fmt.Errorf("SMTP_URL diisi tapi MAIL_FROM kosong")
+	}
+
 	if (c.VAPIDPublicKey == "") != (c.VAPIDPrivateKey == "") {
 		return Config{}, fmt.Errorf("VAPID_PUBLIC_KEY dan VAPID_PRIVATE_KEY harus diisi berdua atau dikosongkan berdua")
 	}
@@ -296,6 +389,15 @@ func (c Config) Attachments() bool { return c.FilerURL != "" }
 // Thumbnails melaporkan apakah turunan gambar dibuat. Ikut mati sendiri bila
 // lampirannya mati — tidak ada gambar untuk diperkecil.
 func (c Config) Thumbnails() bool { return c.Attachments() && c.ThumbMaxDim > 0 }
+
+// Mail melaporkan apakah pengiriman email menyala. Yang mati bukan aplikasinya,
+// melainkan verifikasi alamat dan pemulihan password lewat tautan.
+func (c Config) Mail() bool { return c.SMTPURL != "" }
+
+// Avatars melaporkan apakah foto profil bisa diunggah. Ikut mati sendiri bila
+// lampirannya mati: byte-nya lewat blob.Store yang sama, dan tanpa penyimpanan
+// tidak ada tempat menaruhnya.
+func (c Config) Avatars() bool { return c.Attachments() }
 
 // Push melaporkan apakah notifikasi menyala.
 func (c Config) Push() bool { return c.VAPIDPublicKey != "" && c.VAPIDPrivateKey != "" }

@@ -22,7 +22,12 @@ Kelola grup: **SELESAI** (16 Sep 2026) — ganti judul, tambah/keluarkan anggota
 keluar, pindah pemilik, dan setiap perubahannya meninggalkan catatan di dalam
 percakapan. Lihat [docs/kelola-grup.md](docs/kelola-grup.md).
 
-Berikutnya: **Fase 10 — kelola akun & profil.**
+Kelola akun & profil: **SELESAI** (16 Sep 2026) — foto profil, email
+terverifikasi, ganti dan pulihkan password, daftar sesi aktif, dan status yang
+bertahan melewati logout. Ganti password memutus koneksi di instance lain, dan
+`busy` meredam push. Lihat [docs/kelola-akun.md](docs/kelola-akun.md).
+
+Berikutnya: **Fase 11 — menemukan pesan** (cari, teruskan, pin).
 
 Legend: `[ ]` belum · `[~]` jalan · `[x]` selesai
 
@@ -516,12 +521,12 @@ pasang lenyap begitu dia menutup tab. Jadi presence tetap di Redis, status
 tinggal di Postgres, dan client menampilkan gabungan keduanya.
 
 ### Foto profil
-- [ ] Kolom `avatar_key` di `users`; byte-nya lewat `blob.Store` seperti lampiran
-- [ ] Ukurannya diperkecil lewat paket `imaging` Fase 8 saat diunggah, dan
+- [x] Kolom `avatar_key` di `users`; byte-nya lewat `blob.Store` seperti lampiran
+- [x] Ukurannya diperkecil lewat paket `imaging` Fase 8 saat diunggah, dan
       **berkas aslinya dibuang** — tidak ada yang butuh avatar dua belas
       megapiksel, dan menyimpannya berarti membayar selamanya untuk sesuatu yang
       selalu ditampilkan selebar 40 piksel
-- [ ] **Alamatnya harus berubah setiap fotonya berubah.**
+- [x] **Alamatnya harus berubah setiap fotonya berubah.**
 
       Fase 8 memasang `Cache-Control: private, max-age=31536000, immutable` pada
       semua isi lampiran, dan itu benar untuk byte yang memang tidak pernah
@@ -532,25 +537,25 @@ tinggal di Postgres, dan client menampilkan gabungan keduanya.
       Jadi tiap unggahan menghasilkan id baru, persis seperti lampiran, dan
       alamatnya ikut berubah. Dengan begitu cache setahun kembali menjadi benar,
       bukan menjadi jebakan.
-- [ ] Izin bacanya BERBEDA dari lampiran: avatar boleh dilihat siapa pun yang
+- [x] Izin bacanya BERBEDA dari lampiran: avatar boleh dilihat siapa pun yang
       sudah login, karena orangnya memang sudah bisa ditemukan lewat pencarian
       pengguna. Ditulis eksplisit supaya tidak ada yang menyalin aturan lampiran
       ke sini dan mengira itu kebetulan lebih aman.
-- [ ] Avatar lama disapu setelah diganti, lewat penyapu yang sudah ada
+- [x] Avatar lama disapu setelah diganti, lewat penyapu yang sudah ada
 
 ### Email & password
-- [ ] Kolom `email` di `users` — unik, dan boleh kosong untuk akun lama
-- [ ] Mengubah email atau password **menuntut password saat ini**, bukan sekadar
+- [x] Kolom `email` di `users` — unik, dan boleh kosong untuk akun lama
+- [x] Mengubah email atau password **menuntut password saat ini**, bukan sekadar
       sesi yang masih hidup. Sesi bisa saja milik laptop yang ditinggal terbuka.
-- [ ] Verifikasi email lewat tautan bertoken, dan **email yang belum terverifikasi
+- [x] Verifikasi email lewat tautan bertoken, dan **email yang belum terverifikasi
       tidak boleh dipakai memulihkan akun sama sekali** — kalau boleh, memulihkan
       akun cuma butuh mengaku memiliki sebuah alamat
-- [ ] SMTP jadi dependensi baru, dan mengikuti pola yang sama dengan `REDIS_URL`,
+- [x] SMTP jadi dependensi baru, dan mengikuti pola yang sama dengan `REDIS_URL`,
       `SEAWEED_FILER_URL`, dan kunci VAPID: `SMTP_URL` kosong berarti fitur
       email mati dan aplikasinya tetap utuh
-- [ ] Reset password lewat email — token sekali pakai, berumur pendek, disimpan
+- [x] Reset password lewat email — token sekali pakai, berumur pendek, disimpan
       sebagai hash seperti token sesi
-- [ ] **Ganti password mencabut semua sesi lain, dan benar-benar memutus
+- [x] **Ganti password mencabut semua sesi lain, dan benar-benar memutus
       koneksinya.**
 
       Menghapus baris di `sessions` saja tidak cukup. Koneksi WebSocket yang
@@ -561,14 +566,14 @@ tinggal di Postgres, dan client menampilkan gabungan keduanya.
       Perlu satu event baru di `hub` yang menyuruh instance mana pun yang
       memegang sesi itu menutup koneksinya — jalur yang sama dengan siaran
       biasa, hanya arah kebalikannya.
-- [ ] Daftar sesi aktif beserta cara mencabutnya satu per satu
+- [x] Daftar sesi aktif beserta cara mencabutnya satu per satu
 
 ### Status
-- [ ] Kolom `status` (`available` / `busy` / `away`), `status_text`, dan
+- [x] Kolom `status` (`available` / `busy` / `away`), `status_text`, dan
       `status_expires_at` di `users`
-- [ ] `status_text` dibatasi panjangnya. Ini teks bebas yang ditampilkan ke orang
+- [x] `status_text` dibatasi panjangnya. Ini teks bebas yang ditampilkan ke orang
       lain, dan tanpa batas dia jadi pesan kedua yang menyamar jadi status.
-- [ ] **Durasi tidak dijaga timer di server.**
+- [x] **Durasi tidak dijaga timer di server.**
 
       "10.00 – 13.00" disimpan sebagai `status_expires_at`, dan tidak ada job
       yang membersihkannya. Pembacaan menyaring sendiri
@@ -580,26 +585,93 @@ tinggal di Postgres, dan client menampilkan gabungan keduanya.
       butuh sesuatu yang berjalan. Penyapu lintas instance justru menambah
       masalah — butuh penguncian, dan tiap instance akan menyiarkan kabar
       kedaluwarsa yang sama.
-- [ ] Waktunya disimpan sebagai instan absolut (`timestamptz`), dan client yang
+- [x] Waktunya disimpan sebagai instan absolut (`timestamptz`), dan client yang
       merendernya ke jam lokal. "Sampai jam 13.00" di jam siapa adalah
       pertanyaan yang harus punya jawaban sebelum baris pertama ditulis.
-- [ ] Perubahan status disiarkan ke `ContactIDs` lewat `hub.Publish` — jalur yang
+- [x] Perubahan status disiarkan ke `ContactIDs` lewat `hub.Publish` — jalur yang
       persis sama dengan presence, jadi tidak ada mekanisme fan-out kedua
-- [ ] Snapshot status ikut dikirim saat client menyambung, seperti
+- [x] Snapshot status ikut dikirim saat client menyambung, seperti
       `presence.snapshot` — tanpa itu status seseorang baru terlihat saat dia
       kebetulan menggantinya
-- [ ] **`busy` meredam push.** Inilah yang membuat status bukan sekadar hiasan:
+- [x] **`busy` meredam push.** Inilah yang membuat status bukan sekadar hiasan:
       dia menyambung ke peredam dering Fase 7. Mention tetap menembus, sama
       seperti keputusan di Fase 9.
-- [ ] UI: pemilih status, kolom teks bebas, pemilih durasi dengan pilihan cepat
+- [x] UI: pemilih status, kolom teks bebas, pemilih durasi dengan pilihan cepat
       (30 menit, 1 jam, sampai akhir hari), dan titik presence yang menampilkan
       gabungan online + status
 
 ### Verifikasi
-- [ ] Test store untuk jalur baru, di atas harness yang dibuat di Fase 9
-- [ ] Uji langsung: ganti password memutus sesi lain **di instance yang berbeda**,
+- [x] Test store untuk jalur baru, di atas harness yang dibuat di Fase 9 —
+      22 test baru, plus 4 test hub untuk pencabutan sesi dan 3 test push untuk
+      peredam status
+- [x] `go vet` + `go test -race ./...` bersih; `tsc --noEmit` + `vite build` bersih
+- [x] Uji langsung: ganti password memutus sesi lain **di instance yang berbeda**,
       status yang sudah lewat waktunya tidak pernah ikut terbaca, dan mengganti
       foto benar-benar terlihat oleh orang lain tanpa menunggu cache
+- [x] Uji HTTP langsung (48/48): seluruh penolakan masukan, alamat yang sudah
+      dipakai akun lain (409), token sekali pakai, jawaban pemulihan yang
+      seragam apa pun yang terjadi di dalamnya, dan tautan pemulihan lama yang
+      mati setelah password diganti
+- [x] Uji avatar langsung (20/20): foto 662 KB jadi 22 KB, alamatnya berubah
+      tiap penggantian, alamat lama jadi 404, dan izin bacanya memang lebih
+      longgar dari lampiran
+- [x] Uji lintas instance dengan Redis (22/22): siaran status menyeberang
+      proses, dan ganti password di instance A menutup koneksi di instance B
+- [x] Penyapu sampah penyimpanan diuji langsung terhadap SeaweedFS: byte avatar
+      lama ada sebelum disapu dan hilang sesudahnya
+- [x] Verifikasi browser (Brave, konteks terpisah, puppeteer-core): 36/36 lulus
+      dalam tiga putaran
+
+### Tiga hal yang ditemukan OLEH menjalankannya
+Ketiganya lolos `go vet`, lolos `go test`, dan lolos `tsc`. Uraian lengkap di
+[docs/kelola-akun.md](docs/kelola-akun.md).
+
+1. **`/api/auth/login` dan `/register` mengembalikan bentuk yang salah.**
+   Keduanya menjawab `store.User`, sedangkan `/api/auth/me` menjawab `store.Me` —
+   dan client menyimpan keduanya di tempat yang sama. Yang baru saja masuk
+   karenanya kehilangan keadaan verifikasi email-nya sampai halamannya dimuat
+   ulang.
+2. **Pemulihan password memakai kuota yang salah.** Dia dipasang pada kuota
+   `auth` per-IP bersama login dan register, padahal yang perlu dibatasi di sana
+   bukan biaya argon2 melainkan kemampuan seseorang membanjiri kotak masuk orang
+   lain. Sekarang dia memakai kuota `email`.
+3. **Query lawan bicara di `ListConversations` salah panjang.** Ekspresi `CASE`
+   tanpa alias tidak punya nama kolom sama sekali, jadi subquery yang memuatnya
+   tidak bisa dirujuk dari luar. Ketahuan di test store yang sudah ada sejak
+   Fase 9, bukan di jalur yang baru ditulis.
+
+### Susulan: `GET /api/config`
+Ditemukan dengan memakainya — menekan "Ganti foto" di server tanpa
+`SEAWEED_FILER_URL` dijawab 503, padahal tombolnya tidak pantas ada di sana sama
+sekali. Uraian lengkap di [docs/kelola-akun.md](docs/kelola-akun.md).
+
+- [x] `GET /api/config` melaporkan bagian opsional mana yang menyala; **tanpa
+      sesi**, karena halaman masuk sudah membutuhkannya untuk memutuskan apakah
+      "Lupa password?" pantas ditawarkan
+- [x] Jawabannya dan `/healthz` membaca `Server.features()` yang sama — dua
+      daftar yang disusun sendiri-sendiri adalah dua daftar yang suatu hari akan
+      berbeda pendapat
+- [x] `/api/push/config` dilebur ke sana; endpoint terpisah untuk satu fitur
+      adalah daftar yang tumbuh tiap fase
+- [x] Tombol foto profil, tombol lampiran (lubang Fase 7 yang sama), dan "Lupa
+      password?" kini mengikuti servernya — aturan yang sudah dipakai tombol
+      notifikasi sejak Fase 7 dan panel kelola grup sejak Fase 9b
+- [x] KETIGA jalan masuk berkas ditutup, bukan tombolnya saja: seret dan tempel
+      tidak pernah melewati tombol lampiran
+- [x] Diverifikasi dengan menjalankan DUA server berdampingan — satu penuh, satu
+      telanjang — lalu membandingkan apa yang terlihat: 15/15, plus regresi
+      10/10 untuk jalur yang bisa rusak karenanya
+
+### Yang sengaja TIDAK dikerjakan di fase ini
+- **Hapus akun dan blokir pengguna.** Keduanya menyentuh riwayat orang lain, dan
+  "apa yang terjadi pada pesan lama" adalah keputusan tersendiri. Tetap di
+  daftar "sebelum aplikasi ini boleh dipakai orang".
+- **Ganti username.** Username adalah cara orang lain menemukan seseorang; nama
+  yang berpindah tangan berarti pesan lama suatu hari menunjuk orang yang
+  berbeda. Nama tampilan tidak punya masalah itu.
+- **Otentikasi dua faktor.** Dia menuntut jalur pemulihan keduanya sendiri, dan
+  jalur pemulihan yang setengah jadi lebih berbahaya daripada tidak ada 2FA
+  sama sekali.
 
 ## Fase 11 — Kandidat berikutnya
 - [ ] **Menemukan pesan**: cari, teruskan, dan pin — kelompok yang saling
@@ -627,6 +699,7 @@ tidak perlu ditemukan ulang nanti.
       tidak boleh menyentuh internet
 - [ ] Prosedur cadangan untuk Postgres DAN SeaweedFS; keduanya memegang data
       yang tidak bisa dibuat ulang
-- [ ] Reset password — **dijadwalkan di Fase 10**, bersama email yang memang jadi
-      syaratnya; sampai itu selesai, orang yang lupa kehilangan akunnya selamanya
+- [x] Reset password — **selesai di Fase 10**, bersama email terverifikasi yang
+      memang jadi syaratnya. Menuntut `SMTP_URL` diisi di produksi: tanpa itu
+      fiturnya mati dan orang yang lupa kehilangan akunnya selamanya.
 - [ ] Hapus akun, blokir pengguna, dan cara melaporkan penyalahgunaan

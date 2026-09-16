@@ -3,6 +3,7 @@ import { api } from '../api';
 import { unsubscribeThisDevice, usePush } from '../push';
 import { useStore } from '../store';
 import type { Conversation } from '../types';
+import Avatar, { dotFor, statusLabel } from './Avatar';
 import NewChatDialog from './NewChatDialog';
 
 /** Judul percakapan: grup pakai nama grup, DM pakai nama lawan bicara. */
@@ -54,11 +55,18 @@ function preview(c: Conversation): string {
   return `📎 ${a.name}`;
 }
 
-export default function Sidebar() {
+export default function Sidebar({
+  accountOpen,
+  onToggleAccount,
+}: {
+  accountOpen: boolean;
+  onToggleAccount: () => void;
+}) {
   const me = useStore(s => s.me);
   const conversations = useStore(s => s.conversations);
   const activeId = useStore(s => s.activeId);
   const online = useStore(s => s.online);
+  const statuses = useStore(s => s.statuses);
   const connected = useStore(s => s.connected);
   const openConversation = useStore(s => s.openConversation);
   const reset = useStore(s => s.reset);
@@ -78,16 +86,35 @@ export default function Sidebar() {
 
   return (
     <aside className="flex w-72 shrink-0 flex-col border-r border-line bg-surface">
-      <header className="flex items-center justify-between border-b border-line px-4 py-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold">{me?.displayName}</p>
-          <p className="flex items-center gap-1.5 text-xs text-muted">
-            <span
-              className={`inline-block size-1.5 rounded-full ${connected ? 'bg-emerald-500' : 'bg-amber-500'}`}
-            />
-            {connected ? 'Tersambung' : 'Menyambungkan ulang…'}
-          </p>
-        </div>
+      <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
+        {/* Kepala sidebar adalah satu tombol: menekan foto atau nama sendiri
+            membuka panel akun. Itu tempat yang sudah dicari orang lebih dulu,
+            jauh sebelum mereka mencari ikon roda gigi. */}
+        <button
+          onClick={onToggleAccount}
+          aria-pressed={accountOpen}
+          title="Kelola akun kamu"
+          className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1.5 py-1 text-left transition ${
+            accountOpen ? 'bg-accent-soft' : 'hover:bg-canvas'
+          }`}
+        >
+          <Avatar
+            name={me?.displayName ?? '?'}
+            url={me?.avatarUrl}
+            size={32}
+            dot={dotFor(connected, me?.status)}
+          />
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-semibold">{me?.displayName}</span>
+            <span className="block truncate text-xs text-muted">
+              {/* Status yang dipasang sendiri menggantikan keterangan koneksi:
+                  yang pertama dinyatakan orangnya dengan sengaja, yang kedua
+                  cuma kabar tentang jaringan. */}
+              {statusLabel(me?.status, me?.statusText, me?.statusExpiresAt) ||
+                (connected ? 'Tersambung' : 'Menyambungkan ulang…')}
+            </span>
+          </span>
+        </button>
         <div className="flex shrink-0 items-center gap-0.5">
           {/* Tombol notifikasi hanya muncul kalau memang ada yang bisa
               dilakukan: browser mendukungnya DAN server menyalakannya. Tombol
@@ -135,6 +162,10 @@ export default function Sidebar() {
 
         {conversations.map(c => {
           const isOnline = c.peer ? online.has(c.peer.id) : false;
+          // Status datang dari peta siaran, bukan dari salinan di dalam `peer`:
+          // yang kedua membeku pada saat daftar percakapan diambil, dan daftar
+          // itu tidak diambil ulang setiap kali seseorang memasang statusnya.
+          const peerStatus = c.peer ? statuses[c.peer.id] : undefined;
           return (
             <button
               key={c.id}
@@ -143,12 +174,14 @@ export default function Sidebar() {
                 c.id === activeId ? 'bg-accent-soft' : 'hover:bg-canvas'
               }`}
             >
-              <span className="relative grid size-9 shrink-0 place-items-center rounded-full bg-canvas text-sm font-medium">
-                {conversationTitle(c).charAt(0).toUpperCase()}
-                {c.type === 'direct' && isOnline && (
-                  <span className="absolute right-0 bottom-0 size-2.5 rounded-full border-2 border-surface bg-emerald-500" />
-                )}
-              </span>
+              <Avatar
+                name={conversationTitle(c)}
+                url={c.peer?.avatarUrl}
+                size={36}
+                // Grup tidak punya titik keadaan: "online" untuk sekumpulan
+                // orang tidak punya arti yang bisa dijelaskan.
+                dot={c.type === 'direct' ? dotFor(isOnline, peerStatus?.status) : undefined}
+              />
 
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{conversationTitle(c)}</span>
