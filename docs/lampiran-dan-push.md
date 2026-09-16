@@ -317,7 +317,10 @@ diam-diam — tidak ada error, notifikasinya saja tidak pernah sampai lagi.
 Server yang membuat kunci baru tiap restart adalah server yang notifikasinya
 rusak setiap deploy.
 
-Kunci publiknya diminta client ke `/api/push/config`, tidak ditulis di frontend.
+Kunci publiknya diminta client ke `/api/config`, tidak ditulis di frontend.
+(Sampai Fase 10 alamatnya `/api/push/config`; endpoint itu dilebur ke satu
+tempat yang melaporkan seluruh bagian opsional sekaligus — lihat
+[kelola-akun.md](kelola-akun.md).)
 Kunci adalah urusan deployment; kunci yang tertinggal di bundel frontend akan
 jadi kunci yang salah begitu server diganti.
 

@@ -108,7 +108,7 @@ export function usePush() {
 
     void (async () => {
       const [config, registration] = await Promise.all([
-        api.pushConfig().catch(() => ({ enabled: false, publicKey: '' })),
+        api.serverConfig().catch(() => null),
         navigator.serviceWorker.ready,
       ]);
       const sub = await registration.pushManager.getSubscription();
@@ -116,7 +116,7 @@ export function usePush() {
 
       setState(s => ({
         ...s,
-        available: config.enabled,
+        available: config?.push ?? false,
         enabled: sub !== null,
         blocked: Notification.permission === 'denied',
       }));
@@ -130,8 +130,11 @@ export function usePush() {
   const enable = useCallback(async () => {
     setState(s => ({ ...s, busy: true, error: null }));
     try {
-      const config = await api.pushConfig();
-      if (!config.enabled) throw new Error('Notifikasi tidak aktif di server ini');
+      // Ditanyakan lagi, bukan dipakai dari keadaan awal: antara halaman dibuka
+      // dan tombol ditekan bisa lewat berjam-jam, dan kunci yang dipakai
+      // mendaftar harus kunci yang BENAR-BENAR dipegang server saat ini.
+      const config = await api.serverConfig();
+      if (!config.push) throw new Error('Notifikasi tidak aktif di server ini');
 
       const permission = await Notification.requestPermission();
       if (permission !== 'granted') {
@@ -150,7 +153,7 @@ export function usePush() {
         // langganan yang bisa dipakai diam-diam tanpa menampilkan apa pun ke
         // orangnya adalah pelacak, bukan notifikasi.
         userVisibleOnly: true,
-        applicationServerKey: decodeKey(config.publicKey),
+        applicationServerKey: decodeKey(config.vapidPublicKey),
       });
 
       await api.pushSubscribe(sub.toJSON());

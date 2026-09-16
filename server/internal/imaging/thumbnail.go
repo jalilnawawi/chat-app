@@ -113,8 +113,44 @@ func Make(src []byte, maxDim, maxPixels int) (Thumbnail, error) {
 	return encode(small)
 }
 
-// scale memperkecil img sampai sisi terpanjangnya maxDim, dengan perbandingan
-// sisi yang utuh.
+// Normalize menyandikan ulang sebuah gambar dengan sisi terpanjang PALING
+// BANYAK maxDim, dan tidak pernah mengembalikan ErrTidakPerlu.
+//
+// Bedanya dengan Make ada pada apa yang terjadi pada gambar yang sudah kecil.
+// Make menolak bekerja untuknya, dan itu jawaban yang benar untuk turunan
+// lampiran: berkas aslinya tetap tersimpan dan tetap bisa disajikan apa adanya.
+// Foto profil tidak punya "aslinya" — yang diunggah dibuang begitu ini selesai —
+// jadi menolak bekerja di sana berarti tidak ada apa pun yang tersimpan.
+//
+// Penyandian ulang juga membuang seluruh metadata yang menempel pada berkas
+// aslinya, termasuk koordinat GPS di dalam EXIF sebuah foto. Tidak pernah ada
+// alasannya sebuah titik koordinat ikut terpasang sebagai foto profil yang bisa
+// diunduh siapa pun yang sudah login.
+func Normalize(src []byte, maxDim, maxPixels int) (Thumbnail, error) {
+	if _, err := Measure(src, maxPixels); err != nil {
+		return Thumbnail{}, err
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(src))
+	if err != nil {
+		return Thumbnail{}, fmt.Errorf("dekode gambar: %w", err)
+	}
+
+	// Diperkecil lebih dulu, baru diputar — urutan yang sama dengan Make, dan
+	// dengan alasan yang sama.
+	small := scale(img, maxDim)
+	small = applyOrientation(small, readOrientation(src))
+	return encode(small)
+}
+
+// scale menyesuaikan img sampai sisi terpanjangnya maxDim, dengan perbandingan
+// sisi yang utuh — dan TIDAK PERNAH memperbesar.
+//
+// Penjagaan "tidak pernah memperbesar" ada karena Normalize: Make sudah menolak
+// gambar yang lebih kecil dari maxDim sebelum sampai ke sini, tapi Normalize
+// justru mengirimkannya. Tanpa penjagaan itu, foto profil 64 piksel akan
+// dibentangkan jadi 256 piksel — berkas empat kali lebih besar yang isinya
+// persis sama buramnya.
 //
 // CatmullRom, bukan ApproxBiLinear. Bedanya baru terasa pada pengecilan besar —
 // dan pengecilan besar persis yang terjadi di sini, dari tiga ribu piksel ke
@@ -126,10 +162,14 @@ func scale(img image.Image, maxDim int) *image.RGBA {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 
-	if w >= h {
+	switch {
+	case w <= maxDim && h <= maxDim:
+		// Sudah cukup kecil: ukurannya dipertahankan, dan yang tersisa hanyalah
+		// penyandian ulang oleh pemanggil.
+	case w >= h:
 		h = max(1, h*maxDim/w)
 		w = maxDim
-	} else {
+	default:
 		w = max(1, w*maxDim/h)
 		h = maxDim
 	}

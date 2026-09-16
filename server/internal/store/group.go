@@ -176,7 +176,7 @@ func appendNotice(ctx context.Context, tx pgx.Tx, convID uuid.UUID, lastSeq int6
 // setelah perubahan belum terlihat dari sana sebelum commit.
 func membersIn(ctx context.Context, tx pgx.Tx, convID uuid.UUID) ([]Member, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT u.id, u.username, u.display_name, cm.role, cm.last_read_seq
+		SELECT `+memberCols+`
 		FROM conversation_members cm JOIN users u ON u.id = cm.user_id
 		WHERE cm.conversation_id = $1
 		ORDER BY u.display_name`, convID)
@@ -188,7 +188,7 @@ func membersIn(ctx context.Context, tx pgx.Tx, convID uuid.UUID) ([]Member, erro
 	out := []Member{}
 	for rows.Next() {
 		var m Member
-		if err := rows.Scan(&m.UserID, &m.Username, &m.DisplayName, &m.Role, &m.LastReadSeq); err != nil {
+		if err := scanMember(rows, &m); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

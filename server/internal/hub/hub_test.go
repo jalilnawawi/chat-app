@@ -16,18 +16,38 @@ import (
 
 // fakeSink meniru koneksi WebSocket dengan buffer berukuran tetap.
 type fakeSink struct {
-	id     uuid.UUID
-	mu     sync.Mutex
-	got    [][]byte
-	cap_   int
-	closed bool
+	id      uuid.UUID
+	session []byte
+	mu      sync.Mutex
+	got     [][]byte
+	cap_    int
+	closed  bool
 }
 
 func newFakeSink(id uuid.UUID, capacity int) *fakeSink {
 	return &fakeSink{id: id, cap_: capacity}
 }
 
+// newFakeSession meniru koneksi milik SATU perangkat: dua sink dengan id user
+// yang sama tapi hash sesi yang berbeda adalah dua perangkat orang yang sama.
+func newFakeSession(id uuid.UUID, session string, capacity int) *fakeSink {
+	return &fakeSink{id: id, session: []byte(session), cap_: capacity}
+}
+
 func (f *fakeSink) UserID() uuid.UUID { return f.id }
+
+func (f *fakeSink) SessionHash() []byte { return f.session }
+
+// Kick meniru ws.Client: payload-nya ditulis LEBIH DULU, baru koneksinya
+// berakhir. Urutan itu yang diuji di TestPencabutanSesi.
+func (f *fakeSink) Kick(p []byte) {
+	f.mu.Lock()
+	if !f.closed {
+		f.got = append(f.got, p)
+		f.closed = true
+	}
+	f.mu.Unlock()
+}
 
 // Enqueue meniru ws.Client, termasuk membedakan koneksi yang sudah tutup dari
 // buffer yang penuh.
@@ -48,6 +68,16 @@ func (f *fakeSink) Close() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.closed = true
+}
+
+// last adalah payload terakhir yang diterima sink ini.
+func (f *fakeSink) last() []byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.got) == 0 {
+		return nil
+	}
+	return f.got[len(f.got)-1]
 }
 
 func (f *fakeSink) count() int {
@@ -382,5 +412,112 @@ func TestDeliveryStatesAreDistinct(t *testing.T) {
 	sink.Close()
 	if got := sink.Enqueue([]byte("tiga")); got != Gone {
 		t.Fatalf("setelah ditutup harus Gone, dapat %v", got)
+	}
+}
+
+// ---------- pencabutan sesi (Fase 10) ----------
+
+// Mengganti password harus menutup semua perangkat KECUALI yang sedang dipakai
+// menekan tombolnya.
+//
+// Kalau penyaringnya memakai id pengguna saja — satu-satunya nama yang dimiliki
+// hub sebelum Fase 10 — orang yang baru saja mengamankan akunnya akan langsung
+// dikeluarkan dari layar yang sedang dia buka.
+func TestGantiPasswordMenutupSemuaSesiKecualiYangDipakai(t *testing.T) {
+	h := testHub(t)
+	me, orangLain := uuid.New(), uuid.New()
+
+	ini := newFakeSession(me, "sesi-ini", 4)
+	ponsel := newFakeSession(me, "sesi-ponsel", 4)
+	asing := newFakeSession(me, "sesi-asing", 4)
+	tetangga := newFakeSession(orangLain, "sesi-tetangga", 4)
+
+	for _, s := range []*fakeSink{ini, ponsel, asing, tetangga} {
+		register(t, h, s)
+	}
+
+	h.RevokeSessionsExcept(me, []byte("sesi-ini"))
+
+	if ini.isClosed() {
+		t.Error("sesi yang sedang dipakai ikut ditutup")
+	}
+	if !ponsel.isClosed() || !asing.isClosed() {
+		t.Error("ada sesi lain yang tidak ditutup")
+	}
+	if tetangga.isClosed() {
+		t.Error("koneksi milik orang lain ikut ditutup")
+	}
+}
+
+// Yang ditutup menerima keterangannya lebih dulu. Tanpa itu, satu-satunya yang
+// dilihat orang adalah aplikasi yang tiba-tiba memutus sambungan tanpa sebab —
+// dan aplikasi yang memutus sambungan tanpa sebab terlihat persis seperti
+// aplikasi yang rusak.
+func TestSesiYangDicabutMenerimaKabarnyaLebihDulu(t *testing.T) {
+	h := testHub(t)
+	me := uuid.New()
+
+	c := newFakeSession(me, "sesi-lama", 4)
+	register(t, h, c)
+
+	h.RevokeSessionsExcept(me, nil)
+
+	if !c.isClosed() {
+		t.Fatal("koneksi tidak ditutup")
+	}
+	if c.count() != 1 {
+		t.Fatalf("mau satu pesan perpisahan, dapat %d", c.count())
+	}
+
+	var ev Event
+	if err := json.Unmarshal(c.last(), &ev); err != nil {
+		t.Fatalf("pesan perpisahan bukan JSON yang sah: %v", err)
+	}
+	if ev.Type != EventSessionRevoked {
+		t.Fatalf("mau %q, dapat %q", EventSessionRevoked, ev.Type)
+	}
+}
+
+// Mencabut satu perangkat adalah penyaring yang BERLAWANAN: satu ditutup,
+// sisanya tidak disentuh. Dua method terpisah justru supaya tidak ada pemanggil
+// yang harus mengingat bendera — dan bendera yang salah di sini berarti
+// mengeluarkan orang dari semua perangkatnya saat dia cuma ingin mengeluarkan
+// satu.
+func TestMencabutSatuPerangkatTidakMenyentuhYangLain(t *testing.T) {
+	h := testHub(t)
+	me := uuid.New()
+
+	laptop := newFakeSession(me, "sesi-laptop", 4)
+	ponsel := newFakeSession(me, "sesi-ponsel", 4)
+	register(t, h, laptop)
+	register(t, h, ponsel)
+
+	h.RevokeSession(me, []byte("sesi-ponsel"))
+
+	if !ponsel.isClosed() {
+		t.Error("perangkat yang dicabut tidak ditutup")
+	}
+	if laptop.isClosed() {
+		t.Error("perangkat lain ikut ditutup")
+	}
+}
+
+// Dua tab pada perangkat yang sama berbagi satu cookie, jadi keduanya memenuhi
+// syarat pencabutan yang sama. Mencabut perangkat itu harus menutup keduanya —
+// menyisakan satu tab hidup berarti sesi yang sudah dicabut masih menerima
+// setiap pesan yang masuk.
+func TestMencabutPerangkatMenutupSemuaTabnya(t *testing.T) {
+	h := testHub(t)
+	me := uuid.New()
+
+	tabSatu := newFakeSession(me, "sesi-laptop", 4)
+	tabDua := newFakeSession(me, "sesi-laptop", 4)
+	register(t, h, tabSatu)
+	register(t, h, tabDua)
+
+	h.RevokeSession(me, []byte("sesi-laptop"))
+
+	if !tabSatu.isClosed() || !tabDua.isClosed() {
+		t.Error("ada tab yang tertinggal hidup setelah perangkatnya dicabut")
 	}
 }

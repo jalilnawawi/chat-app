@@ -77,6 +77,32 @@ services:
       timeout: 3s
       retries: 20
 
+  # Penampung surat untuk pengembangan (Fase 10).
+  #
+  # Mailpit menerima SMTP di 1025 dan menampilkan apa pun yang masuk di 8025.
+  # Dia sengaja TIDAK meneruskan surat ke mana-mana: yang ingin dibuktikan
+  # secara lokal adalah bahwa tautan verifikasi dan pemulihan benar-benar
+  # tersusun dan terkirim, bukan bahwa alamat orang sungguhan bisa dijangkau.
+  #
+  # Tanpa SMTP_URL, seluruh fitur email mati dan aplikasinya tetap utuh — pola
+  # satu-variabel yang sama dengan REDIS_URL dan SEAWEED_FILER_URL. Container
+  # ini adalah cara mencoba jalur yang menyala, bukan syarat menjalankannya.
+  mailpit:
+    image: axllent/mailpit:v1.28
+    container_name: chatapp-mailpit
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   chatapp-pgdata:
   chatapp-seaweed:

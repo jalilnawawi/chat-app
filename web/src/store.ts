@@ -3,12 +3,16 @@ import { ApiError, api } from './api';
 import { uuidv7 } from './uuid';
 import type {
   Conversation,
+  Me,
   Member,
   Message,
   PendingMessage,
   ReactionSummary,
+  ServerConfig,
+  StatusKind,
   Upload,
   User,
+  UserStatus,
 } from './types';
 
 /**
@@ -37,8 +41,18 @@ const MAX_ATTACHMENTS = 10;
 type TypingEntry = { displayName: string; at: number };
 
 type State = {
-  me: User | null;
+  me: Me | null;
   connected: boolean;
+
+  /**
+   * Apa yang bisa dilakukan server ini. null = belum sempat ditanyakan.
+   *
+   * Dipakai untuk TIDAK MENAMPILKAN tombol yang pasti ditolak — aturan yang
+   * sama dengan panel kelola grup. Selama masih null, yang bisa dimatikan
+   * dianggap MATI: menampilkan tombol lalu menariknya kembali sepersekian detik
+   * kemudian lebih buruk daripada menampilkannya sedikit terlambat.
+   */
+  config: ServerConfig | null;
 
   conversations: Conversation[];
   activeId: string | null;
@@ -59,6 +73,16 @@ type State = {
   members: Record<string, Member[]>;
 
   online: Set<string>;
+  /**
+   * Status orang lain, per id. Dua keadaan yang sengaja dipisah dari `online`
+   * di atas: presence diturunkan dari koneksi yang hidup dan hilang begitu
+   * tabnya ditutup; status adalah pernyataan yang dibuat orang dan bertahan
+   * melewati logout. Titik di sidebar menampilkan gabungan keduanya.
+   *
+   * Hanya memuat yang BUKAN bawaan. Yang tidak ada di sini adalah 'available'
+   * tanpa teks, dan server memang tidak pernah mengirimkannya.
+   */
+  statuses: Record<string, UserStatus>;
   typing: Record<string, Record<string, TypingEntry>>;
 
   /** Pesan yang sedang dibalas, per percakapan. null = tidak sedang membalas. */
@@ -66,8 +90,14 @@ type State = {
   /** Sebutan yang sudah dipilih dari daftar, per percakapan. */
   mentionDraft: Record<string, MentionDraft>;
 
-  setMe: (u: User | null) => void;
+  setMe: (u: Me | null) => void;
   setConnected: (v: boolean) => void;
+  loadConfig: () => Promise<void>;
+
+  updateProfile: (displayName: string) => Promise<void>;
+  setStatus: (status: StatusKind, text: string, expiresAt: string | null) => Promise<void>;
+  uploadAvatar: (file: File, onProgress: (fraction: number) => void) => Promise<void>;
+  removeAvatar: () => Promise<void>;
 
   loadConversations: () => Promise<void>;
   openConversation: (id: string) => Promise<void>;
@@ -111,6 +141,9 @@ type State = {
   applyTyping: (conversationId: string, userId: string, displayName: string, typing: boolean) => void;
   setOnline: (ids: string[]) => void;
   setPresence: (userId: string, online: boolean) => void;
+  applyStatus: (status: UserStatus) => void;
+  applyStatusSnapshot: (statuses: UserStatus[]) => void;
+  applyUserUpdated: (user: User) => void;
 
   /** Cursor per percakapan untuk resume setelah reconnect. */
   syncCursors: () => Record<string, number>;
@@ -156,6 +189,7 @@ function upsert(list: Message[], m: Message): Message[] {
 export const useStore = create<State>((set, get) => ({
   me: null,
   connected: false,
+  config: null,
   conversations: [],
   activeId: null,
   messages: {},
@@ -164,12 +198,28 @@ export const useStore = create<State>((set, get) => ({
   hasMore: {},
   members: {},
   online: new Set(),
+  statuses: {},
   typing: {},
   replyTo: {},
   mentionDraft: {},
 
   setMe: me => set({ me }),
   setConnected: connected => set({ connected }),
+
+  /**
+   * Kegagalannya diam. Server yang tidak menjawab pertanyaan ini adalah server
+   * yang juga tidak akan menjawab yang lain, dan pesan kesalahan tentang
+   * "konfigurasi" di layar orang yang baru membuka aplikasi tidak memberi tahu
+   * apa pun yang bisa dia lakukan. Yang tersisa: config tetap null, dan yang
+   * bisa dimatikan dianggap mati.
+   */
+  loadConfig: async () => {
+    try {
+      set({ config: await api.serverConfig() });
+    } catch {
+      set({ config: null });
+    }
+  },
 
   reset: () =>
     set(s => {
@@ -179,6 +229,10 @@ export const useStore = create<State>((set, get) => ({
         for (const u of list) if (u.previewUrl) URL.revokeObjectURL(u.previewUrl);
       }
       files.clear();
+      // `config` sengaja tidak ikut dibuang: dia menggambarkan SERVER-nya,
+      // bukan orang yang barusan keluar. Membuangnya berarti halaman masuk
+      // kehilangan jawaban "apakah pemulihan password tersedia" tepat setelah
+      // seseorang logout — dan menanyakannya lagi untuk jawaban yang sama.
       return {
         me: null,
         conversations: [],
@@ -189,11 +243,48 @@ export const useStore = create<State>((set, get) => ({
         hasMore: {},
         members: {},
         online: new Set(),
+        statuses: {},
         typing: {},
         replyTo: {},
         mentionDraft: {},
       };
     }),
+
+  /**
+   * Keempat tindakan akun menerapkan jawabannya sendiri ke `me`.
+   *
+   * Server memang menyiarkan `user.updated` ke kita juga — kita termasuk
+   * penerimanya justru supaya tab lain ikut berubah — tapi menunggu siaran itu
+   * berarti layar orang yang menekan tombolnya sendiri adalah yang paling
+   * terakhir berubah. Jalur yang sama dengan pengelolaan grup di Fase 9b.
+   */
+  updateProfile: async displayName => {
+    set({ me: await api.updateProfile(displayName) });
+  },
+
+  setStatus: async (status, text, expiresAt) => {
+    const got = await api.setStatus(status, text, expiresAt);
+    set(s =>
+      s.me
+        ? {
+            me: {
+              ...s.me,
+              status: got.status,
+              statusText: got.text,
+              statusExpiresAt: got.expiresAt,
+            },
+          }
+        : s,
+    );
+  },
+
+  uploadAvatar: async (file, onProgress) => {
+    set({ me: await api.uploadAvatar(file, onProgress) });
+  },
+
+  removeAvatar: async () => {
+    set({ me: await api.removeAvatar() });
+  },
 
   loadConversations: async () => {
     set({ conversations: await api.conversations() });
@@ -696,6 +787,69 @@ export const useStore = create<State>((set, get) => ({
       else next.delete(userId);
       return { online: next };
     }),
+
+  /**
+   * Satu perubahan status.
+   *
+   * Yang kembali ke bawaan DIHAPUS dari peta, bukan disimpan sebagai
+   * 'available'. Peta ini hanya pernah memuat yang punya sesuatu untuk
+   * diceritakan — sama dengan apa yang dikirim snapshot — jadi menyimpan
+   * keadaan bawaan di sini membuat dua bentuk untuk satu arti, dan setiap
+   * pembacanya harus mengenali keduanya.
+   */
+  applyStatus: status =>
+    set(s => {
+      const next = { ...s.statuses };
+      if (status.status === 'available' && !status.text) delete next[status.userId];
+      else next[status.userId] = status;
+
+      // Status kita sendiri ikut ke `me`: siarannya memang kembali kepada kita
+      // supaya tab lain ikut berubah, dan tanpa baris ini tab itu tetap
+      // menampilkan pilihan yang lama di panel akunnya.
+      const me =
+        s.me && status.userId === s.me.id
+          ? { ...s.me, status: status.status, statusText: status.text, statusExpiresAt: status.expiresAt }
+          : s.me;
+      return { statuses: next, me };
+    }),
+
+  applyStatusSnapshot: statuses =>
+    set(() => {
+      // Ditimpa, bukan digabung: snapshot adalah KEADAAN sekarang, dan status
+      // yang habis waktunya selagi kita offline memang harus hilang. Dia tidak
+      // pernah datang sebagai kabar tersendiri — tidak ada yang menyiarkan
+      // kedaluwarsa, karena tidak ada yang menjaganya.
+      const next: Record<string, UserStatus> = {};
+      for (const st of statuses) next[st.userId] = st;
+      return { statuses: next };
+    }),
+
+  /**
+   * Nama atau foto seseorang berubah.
+   *
+   * Disalin ke SEMUA tempat yang menyimpan salinannya: `peer` pada daftar
+   * percakapan, daftar anggota tiap percakapan, dan `me` bila itu kita sendiri.
+   * Melewatkan salah satunya berarti foto baru muncul di satu tempat dan foto
+   * lama bertahan di tempat lain — bentuk kegagalan yang terlihat seperti cache
+   * yang rusak, padahal cache-nya justru bekerja dengan benar.
+   */
+  applyUserUpdated: user =>
+    set(s => ({
+      me: s.me && s.me.id === user.id ? { ...s.me, ...user } : s.me,
+      conversations: s.conversations.map(c =>
+        c.peer?.id === user.id ? { ...c, peer: { ...c.peer, ...user } } : c,
+      ),
+      members: Object.fromEntries(
+        Object.entries(s.members).map(([id, roster]) => [
+          id,
+          roster.map(m =>
+            m.userId === user.id
+              ? { ...m, displayName: user.displayName, avatarUrl: user.avatarUrl }
+              : m,
+          ),
+        ]),
+      ),
+    })),
 
   syncCursors: () => {
     const { messages } = get();

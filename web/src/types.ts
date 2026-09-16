@@ -1,11 +1,73 @@
 // Bentuk data ini harus sama persis dengan JSON dari server Go.
 // Lihat server/internal/store/models.go dan server/internal/hub/hub.go.
 
+/**
+ * Pengguna SEBAGAIMANA DILIHAT ORANG LAIN.
+ *
+ * Tidak memuat email, dan itu disengaja: bentuk ini ikut di hasil pencarian, di
+ * `peer` pada daftar percakapan, dan di setiap siaran yang menyebut seseorang.
+ * Bagian pribadi tinggal di `Me`. Lihat server/internal/store/models.go.
+ */
 export type User = {
   id: string;
   username: string;
   displayName: string;
   createdAt: string;
+  /**
+   * Kosong berarti belum ada foto; client menampilkan huruf pertama namanya.
+   *
+   * Alamatnya memuat id UNGGAHAN, bukan id penggunanya, jadi dia berubah setiap
+   * fotonya berubah — itu yang membuat cache setahun di sisi server benar.
+   */
+  avatarUrl?: string;
+  /**
+   * Status BUKAN presence.
+   *
+   * Presence (`online`) diturunkan dari koneksi yang hidup dan hilang begitu
+   * tabnya ditutup. Status adalah pernyataan yang dibuat orang dengan sengaja
+   * dan bertahan melewati tutup laptop, ganti perangkat, dan logout. Titik di
+   * sidebar menampilkan GABUNGAN keduanya.
+   */
+  status: StatusKind;
+  statusText?: string;
+  /**
+   * Instan absolut (ISO-8601). Server tidak pernah membersihkan status yang
+   * lewat waktunya — dia menyaringnya saat dibaca — dan client menghitung
+   * mundur sendiri dari angka ini, dalam jam LOKAL pembacanya.
+   */
+  statusExpiresAt?: string;
+};
+
+export type StatusKind = 'available' | 'busy' | 'away';
+
+/** Pengguna sebagaimana dilihat DIRINYA SENDIRI. Satu-satunya yang membawa email. */
+export type Me = User & {
+  email?: string;
+  /**
+   * Alamat yang belum dibuktikan kepemilikannya TIDAK bisa dipakai memulihkan
+   * akun sama sekali — kalau bisa, memulihkan akun orang lain cuma butuh
+   * mengaku memiliki sebuah alamat.
+   */
+  emailVerified: boolean;
+};
+
+/** Status seseorang tanpa sisa identitasnya: bentuk yang disiarkan. */
+export type UserStatus = {
+  userId: string;
+  status: StatusKind;
+  text?: string;
+  expiresAt?: string;
+};
+
+/** Satu perangkat yang sedang login. */
+export type Session = {
+  id: string;
+  userAgent: string;
+  createdAt: string;
+  lastSeenAt: string | null;
+  expiresAt: string;
+  /** Sesi yang sedang dipakai membaca halaman ini; tidak ditawari tombol cabut. */
+  current: boolean;
 };
 
 /**
@@ -126,6 +188,14 @@ export type Member = {
   displayName: string;
   role: 'owner' | 'member';
   lastReadSeq: number;
+  /**
+   * Status sengaja TIDAK ikut di sini. Anggota sebuah percakapan menurut
+   * definisi berbagi percakapan dengan kita, jadi mereka sudah termasuk kontak —
+   * dan status kontak datang lewat snapshot saat koneksi dibuka lalu tetap segar
+   * lewat siaran. Menyalinnya ke sini berarti dua sumber untuk satu jawaban, dan
+   * yang satu ini membeku pada saat daftarnya diambil.
+   */
+  avatarUrl?: string;
 };
 
 export type Conversation = {
@@ -230,6 +300,29 @@ export type ServerEvent =
   | { type: 'presence'; payload: { userId: string; online: boolean } }
   | { type: 'presence.snapshot'; payload: { online: string[] } }
   /**
+   * Status yang baru dipasang seseorang, dan keadaan awal saat koneksi dibuka.
+   *
+   * Jalurnya persis sama dengan presence — siaran ke kontak, snapshot ke satu
+   * koneksi — supaya tidak ada mekanisme fan-out kedua yang harus ikut benar.
+   * Snapshot hanya memuat yang BUKAN bawaan: yang available tanpa teks tidak
+   * pernah dikirim, karena client sudah menganggap semua orang begitu.
+   */
+  | { type: 'status'; payload: UserStatus }
+  | { type: 'status.snapshot'; payload: { statuses: UserStatus[] } }
+  /**
+   * Nama tampilan atau foto seseorang berubah.
+   *
+   * Tanpa event ini, foto baru memang punya alamat baru — tapi tidak seorang
+   * pun tahu alamat itu sampai halamannya dimuat ulang.
+   */
+  | { type: 'user.updated'; payload: User }
+  /**
+   * Sesi koneksi ini baru saja dicabut, dan koneksinya ditutup tepat setelah
+   * frame ini. Satu-satunya event yang arahnya kebalikan dari yang lain: dia
+   * bukan kabar tentang percakapan, melainkan akhir dari sesi ini.
+   */
+  | { type: 'session.revoked'; payload: { reason: string } }
+  /**
    * Pesan susulan setelah reconnect, dikirim berkelompok dalam satu frame.
    * Satu frame per pesan akan meluberkan antrean kirim koneksi saat banyak
    * orang menyusul bersamaan — lihat catatan di server/internal/ws/handler.go.
@@ -276,8 +369,35 @@ export type ServerEvent =
   | { type: 'server.shutdown'; payload: { reason: string } }
   | { type: 'error'; payload: { message: string } };
 
-/** Jawaban GET /api/push/config. */
-export type PushConfig = {
-  enabled: boolean;
-  publicKey: string;
+/**
+ * Jawaban GET /api/config: apa yang bisa dilakukan server ini.
+ *
+ * Ada supaya tombol yang PASTI ditolak tidak pernah ditampilkan. Aturan itu
+ * sudah dipakai di panel kelola grup — tombol yang bukan hak seseorang tidak
+ * ditampilkan kepadanya, bukan ditampilkan lalu ditolak server — dan lampiran,
+ * foto profil, serta pemulihan password sekarang mengikutinya juga.
+ *
+ * Diminta SEKALI saat aplikasi dibuka, sebelum siapa pun login: halaman masuk
+ * sudah membutuhkan `mail` untuk memutuskan apakah "Lupa password?" pantas
+ * ditawarkan.
+ */
+export type ServerConfig = {
+  /** Unggahan lampiran menyala (`SEAWEED_FILER_URL` diisi). */
+  attachments: boolean;
+  /** Turunan gambar dibuat (`THUMBNAIL_MAX_DIM` bukan nol). */
+  thumbnails: boolean;
+  /**
+   * Foto profil bisa diunggah.
+   *
+   * Menuntut KEDUANYA: byte-nya menumpang penyimpanan yang sama dengan
+   * lampiran, dan berkas aslinya dibuang setelah diperkecil — jadi tanpa
+   * pengolahan gambar tidak ada yang bisa disimpan sama sekali.
+   */
+  avatars: boolean;
+  /** Push notification menyala (kunci VAPID terisi). */
+  push: boolean;
+  /** Verifikasi email dan pemulihan password menyala (`SMTP_URL` diisi). */
+  mail: boolean;
+  /** Kunci publik VAPID. Kosong bila push mati. */
+  vapidPublicKey: string;
 };

@@ -12,6 +12,7 @@ import (
 
 	"github.com/jalilnawawi/chat-app/server/internal/metrics"
 	"github.com/jalilnawawi/chat-app/server/internal/ratelimit"
+	"github.com/jalilnawawi/chat-app/server/internal/store"
 )
 
 type fakePresence struct {
@@ -34,12 +35,36 @@ func (f fakePresence) OnlineAmong(_ context.Context, ids []uuid.UUID) ([]uuid.UU
 	return out, nil
 }
 
+// fakeStore memenuhi Subscriptions tanpa database. Hanya BusyAmong yang pernah
+// dipanggil dari jalur penyaringan penerima; tiga sisanya baru terpakai setelah
+// penyaringan itu memutuskan ada yang layak dibangunkan.
+type fakeStore struct {
+	busy []uuid.UUID
+}
+
+func (f fakeStore) BusyAmong(_ context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	out := []uuid.UUID{}
+	for _, id := range ids {
+		if slices.Contains(f.busy, id) {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+func (fakeStore) SubscriptionsOf(context.Context, []uuid.UUID) ([]store.PushSubscription, error) {
+	return nil, nil
+}
+func (fakeStore) DeleteSubscription(context.Context, string) error        { return nil }
+func (fakeStore) MarkSubscriptionDelivered(context.Context, string) error { return nil }
+
 // newTestDispatcher merakit Dispatcher tanpa menyalakan pekerjanya. Yang diuji
 // di sini adalah penyaringan penerima, dan itu tidak menyentuh database maupun
 // jaringan.
-func newTestDispatcher(presence Presence, rule ratelimit.Rule) *Dispatcher {
+func newTestDispatcher(presence Presence, rule ratelimit.Rule, busy ...uuid.UUID) *Dispatcher {
 	return &Dispatcher{
 		presence: presence,
+		store:    fakeStore{busy: busy},
 		limiter:  ratelimit.NewMemory(),
 		rule:     rule,
 		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -175,5 +200,65 @@ func TestEnqueueBersamaanDenganCloseAman(t *testing.T) {
 func TestNewTanpaKunciMengembalikanNil(t *testing.T) {
 	if d := New(nil, fakePresence{}, nil, ratelimit.Rule{}, "", "", "", nil, nil); d != nil {
 		t.Error("Dispatcher dibuat padahal kunci VAPID kosong")
+	}
+}
+
+// Status "busy" adalah peredam KEDUA, di samping token bucket per percakapan.
+// Inilah yang membuat status bukan sekadar hiasan: dia menyambung ke peredam
+// dering yang sudah ada sejak Fase 7.
+func TestYangSedangSibukTidakDibangunkan(t *testing.T) {
+	sibuk, santai := uuid.New(), uuid.New()
+	d := newTestDispatcher(fakePresence{}, ratelimit.PerMinute(5, 60), sibuk)
+
+	got, err := d.awake(t.Context(), Notification{
+		Recipients:     []uuid.UUID{sibuk, santai},
+		ConversationID: uuid.New(),
+	})
+	if err != nil {
+		t.Fatalf("awake: %v", err)
+	}
+	if len(got) != 1 || got[0] != santai {
+		t.Fatalf("mau hanya yang tidak sibuk, dapat %v", got)
+	}
+}
+
+// Sebutan menembus KEDUA peredam. Aturannya sama persis dengan keputusan Fase
+// 9: dering biasa boleh diredam, panggilan yang menyebut nama seseorang tidak.
+// Orang yang memasang "sedang rapat" justru yang paling butuh tahu kalau
+// namanya dipanggil di tengah rapat itu.
+func TestSebutanMenembusStatusSibuk(t *testing.T) {
+	sibuk := uuid.New()
+	d := newTestDispatcher(fakePresence{}, ratelimit.PerMinute(5, 60), sibuk)
+
+	got, err := d.awake(t.Context(), Notification{
+		Recipients:     []uuid.UUID{sibuk},
+		Mentioned:      []uuid.UUID{sibuk},
+		ConversationID: uuid.New(),
+	})
+	if err != nil {
+		t.Fatalf("awake: %v", err)
+	}
+	if len(got) != 1 || got[0] != sibuk {
+		t.Fatalf("sebutan tidak menembus status sibuk: %v", got)
+	}
+}
+
+// Yang sibuk TAPI sedang online tetap tidak dibangunkan, dan urutan
+// pemeriksaannya yang menjamin itu: presence disaring lebih dulu, sendiri,
+// sebelum status ditanyakan sama sekali.
+func TestYangSibukDanOnlineTidakMenyentuhPemeriksaanStatus(t *testing.T) {
+	sibuk := uuid.New()
+	d := newTestDispatcher(fakePresence{online: []uuid.UUID{sibuk}}, ratelimit.PerMinute(5, 60), sibuk)
+
+	got, err := d.awake(t.Context(), Notification{
+		Recipients:     []uuid.UUID{sibuk},
+		Mentioned:      []uuid.UUID{sibuk},
+		ConversationID: uuid.New(),
+	})
+	if err != nil {
+		t.Fatalf("awake: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("yang sedang online ikut dibangunkan: %v", got)
 	}
 }

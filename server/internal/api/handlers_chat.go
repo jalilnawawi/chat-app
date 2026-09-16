@@ -260,7 +260,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 			s.log.Error("ambil anggota untuk siaran", "conversation", convID, "err", err)
 		} else {
 			s.hub.Publish(members, hub.Event{Type: hub.EventMessageNew, Payload: msg})
-			s.notifyOffline(r, msg, me, members)
+			s.notifyOffline(r, msg, me.User, members)
 		}
 	}
 	writeJSON(w, http.StatusCreated, msg)

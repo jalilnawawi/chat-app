@@ -76,10 +76,16 @@ func VerifyPassword(encoded, password string) error {
 	return nil
 }
 
-// NewSessionToken mengembalikan token acak untuk cookie beserta hash-nya.
-// Hanya hash yang masuk database: bocornya tabel sessions tidak memberi
-// penyerang token yang bisa dipakai login.
-func NewSessionToken() (token string, hash []byte, err error) {
+// NewToken mengembalikan rahasia acak beserta hash-nya.
+//
+// Hanya hash yang pernah masuk database — aturan yang sama untuk token sesi
+// (Fase 1) maupun tautan verifikasi dan pemulihan (Fase 10): bocornya tabel
+// tidak memberi penyerang satu pun rahasia yang bisa dipakai.
+//
+// base64 URL-safe, karena separuh pemakaiannya berakhir di dalam alamat yang
+// dikirim lewat email — dan "+" yang lolos ke query string akan terbaca sebagai
+// spasi oleh server yang membacanya kembali.
+func NewToken() (token string, hash []byte, err error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", nil, fmt.Errorf("read token: %w", err)
@@ -87,6 +93,9 @@ func NewSessionToken() (token string, hash []byte, err error) {
 	token = base64.RawURLEncoding.EncodeToString(raw)
 	return token, HashToken(token), nil
 }
+
+// NewSessionToken adalah NewToken untuk cookie sesi.
+func NewSessionToken() (token string, hash []byte, err error) { return NewToken() }
 
 func HashToken(token string) []byte {
 	sum := sha256.Sum256([]byte(token))

@@ -36,6 +36,16 @@ export function useSocket(enabled: boolean) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closedByUs = useRef(false);
   const plannedRestart = useRef(false);
+  /**
+   * Sesi koneksi ini sudah dicabut server.
+   *
+   * Dicatat terpisah dari closedByUs karena sebabnya berbeda dan akibatnya
+   * sama: tidak ada gunanya menyambung lagi. Tanpa penanda ini, koneksi yang
+   * dicabut akan mencoba reconnect selamanya — handshake-nya ditolak 401,
+   * onclose berbunyi lagi, dan orangnya melihat "Menyambungkan ulang…" yang
+   * tidak akan pernah berhasil.
+   */
+  const revoked = useRef(false);
 
   const send = useCallback((type: string, payload: unknown) => {
     const ws = socketRef.current;
@@ -47,6 +57,7 @@ export function useSocket(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
     closedByUs.current = false;
+    revoked.current = false;
 
     const store = useStore.getState;
 
@@ -147,6 +158,24 @@ export function useSocket(enabled: boolean) {
           case 'presence.snapshot':
             s.setOnline(ev.payload.online);
             break;
+          case 'status':
+            s.applyStatus(ev.payload);
+            break;
+          case 'status.snapshot':
+            s.applyStatusSnapshot(ev.payload.statuses);
+            break;
+          case 'user.updated':
+            s.applyUserUpdated(ev.payload);
+            break;
+          case 'session.revoked':
+            // Password diganti di perangkat lain, atau perangkat ini baru saja
+            // dikeluarkan dari daftar sesi aktif. Koneksinya ditutup server
+            // tepat setelah frame ini; yang dikerjakan di sini cuma memastikan
+            // layarnya ikut berubah alih-alih menggantung pada percakapan yang
+            // sudah tidak boleh dia baca.
+            revoked.current = true;
+            s.reset();
+            break;
           case 'server.shutdown':
             // Penutupannya menyusul sebentar lagi; yang dicatat di sini cuma
             // SEBABNYA, supaya onclose tahu ini pamit terencana, bukan jaringan
@@ -162,7 +191,7 @@ export function useSocket(enabled: boolean) {
       ws.onclose = () => {
         store().setConnected(false);
         socketRef.current = null;
-        if (closedByUs.current) return;
+        if (closedByUs.current || revoked.current) return;
 
         let delay: number;
         if (plannedRestart.current) {

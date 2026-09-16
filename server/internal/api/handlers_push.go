@@ -12,19 +12,10 @@ import (
 	"github.com/jalilnawawi/chat-app/server/internal/store"
 )
 
-// handlePushConfig memberi tahu client apakah notifikasi tersedia, sekaligus
-// kunci publik yang dibutuhkan browser untuk mendaftar.
-//
-// Client TIDAK boleh menyimpan kunci ini di kodenya sendiri. Kunci adalah
-// urusan deployment, dan browser mengunci langganannya pada kunci yang dipakai
-// saat mendaftar — kunci yang tertinggal di bundel frontend akan jadi kunci
-// yang salah begitu server diganti.
-func (s *Server) handlePushConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":   s.push.Enabled(),
-		"publicKey": s.push.PublicKey(),
-	})
-}
+// Keadaan notifikasi dan kunci publik VAPID dilaporkan oleh GET /api/config,
+// bersama seluruh bagian opsional lain — lihat Server.features. Endpoint
+// terpisah untuk satu fitur berarti client harus tahu lebih dulu fitur mana
+// yang punya endpoint sendiri, dan itu daftar yang tumbuh tiap fase.
 
 func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 	me := userFrom(r.Context())

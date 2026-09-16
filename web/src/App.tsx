@@ -6,12 +6,47 @@ import { useSocket } from './useSocket';
 import AuthPage from './components/AuthPage';
 import Sidebar from './components/Sidebar';
 import ChatPanel from './components/ChatPanel';
+import AccountPanel from './components/AccountPanel';
 
 export default function App() {
   const me = useStore(s => s.me);
   const setMe = useStore(s => s.setMe);
+  const loadConfig = useStore(s => s.loadConfig);
   const loadConversations = useStore(s => s.loadConversations);
   const [checking, setChecking] = useState(true);
+  const [accountOpen, setAccountOpen] = useState(false);
+  /**
+   * Hasil membuka tautan verifikasi email.
+   *
+   * Ditangani SEBELUM sesi diperiksa, dan sengaja tidak menuntut login:
+   * tautannya diklik dari kotak masuk, sering di perangkat yang berbeda dari
+   * tempat akunnya dipakai. Menuntut login lebih dulu berarti menuntut orang
+   * memasukkan password justru pada jalur yang ada untuk membuktikan hal lain.
+   */
+  const [verified, setVerified] = useState<string | null>(null);
+
+  // Tautan verifikasi. Parameternya dibuang setelah dipakai supaya reload
+  // berikutnya tidak mencoba memakai token yang sudah habis sekali pakainya —
+  // dan gagal dengan pesan yang membingungkan.
+  useEffect(() => {
+    const token = new URLSearchParams(location.search).get('verify');
+    if (!token) return;
+
+    history.replaceState(null, '', location.pathname);
+    api
+      .verifyEmail(token)
+      .then(got => setVerified(`Alamat ${got.email} terverifikasi.`))
+      .catch(err => setVerified(err instanceof Error ? err.message : 'Verifikasi gagal.'));
+  }, []);
+
+  // Kemampuan server ditanyakan SEKALI, dan tidak menunggu sesi: halaman masuk
+  // sudah membutuhkannya untuk memutuskan apakah "Lupa password?" pantas
+  // ditawarkan. Sengaja tidak ikut menahan `checking` di bawah — layar yang
+  // menahan seluruh aplikasi demi daftar tombol adalah layar yang menukar
+  // sesuatu yang penting dengan sesuatu yang tidak.
+  useEffect(() => {
+    void loadConfig();
+  }, [loadConfig]);
 
   // Cek sesi yang masih hidup dari cookie sebelum menampilkan apa pun, supaya
   // reload halaman tidak memaksa login ulang.
@@ -75,12 +110,27 @@ export default function App() {
     );
   }
 
-  if (!me) return <AuthPage />;
+  if (!me) return <AuthPage notice={verified} />;
 
   return (
-    <div className="mx-auto flex h-full max-w-6xl overflow-hidden border-line sm:border-x">
-      <Sidebar />
-      <ChatPanel send={socket.send} />
+    <div className="mx-auto flex h-full max-w-6xl flex-col overflow-hidden border-line sm:border-x">
+      {verified && (
+        <p className="flex items-center justify-between gap-3 border-b border-line bg-accent-soft px-4 py-2 text-sm">
+          {verified}
+          <button
+            onClick={() => setVerified(null)}
+            aria-label="Tutup kabar"
+            className="shrink-0 rounded px-1.5 text-muted transition hover:text-ink"
+          >
+            ✕
+          </button>
+        </p>
+      )}
+      <div className="flex min-h-0 flex-1">
+        <Sidebar accountOpen={accountOpen} onToggleAccount={() => setAccountOpen(v => !v)} />
+        <ChatPanel send={socket.send} />
+        {accountOpen && <AccountPanel onClose={() => setAccountOpen(false)} />}
+      </div>
     </div>
   );
 }

@@ -54,11 +54,17 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.startSession(w, r, user); err != nil {
+	if err := s.startSession(w, r, store.Me{User: user}); err != nil {
 		s.writeStoreError(w, err, "start session")
 		return
 	}
-	writeJSON(w, http.StatusCreated, user)
+
+	// Dibungkus Me, bukan dikirim sebagai User. Keduanya terlihat sama untuk
+	// akun yang baru lahir — dia memang belum punya email — tapi bentuknya
+	// harus sama dengan yang dijawab /api/auth/me, karena client menyimpan
+	// keduanya di tempat yang sama. Yang beda bentuk adalah panel akun yang
+	// kehilangan keadaan verifikasinya sampai halamannya dimuat ulang.
+	writeJSON(w, http.StatusCreated, store.Me{User: user})
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -106,12 +112,16 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, userFrom(r.Context()))
 }
 
-func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user store.User) error {
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user store.Me) error {
 	token, hash, err := auth.NewSessionToken()
 	if err != nil {
 		return err
 	}
-	if err := s.store.CreateSession(r.Context(), hash, user.ID, time.Now().Add(sessionTTL)); err != nil {
+	// Keterangan perangkat disalin dari permintaan yang membuat sesinya, dan
+	// dipotong: User-Agent datang dari client dan tidak ada batas panjangnya di
+	// standar mana pun. Batas yang sama dipakai jalur langganan push.
+	agent := truncate(r.UserAgent(), 300)
+	if err := s.store.CreateSession(r.Context(), hash, user.ID, agent, time.Now().Add(sessionTTL)); err != nil {
 		return err
 	}
 	s.setSessionCookie(w, token)
