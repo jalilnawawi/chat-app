@@ -2,15 +2,16 @@
 
 Aplikasi chat realtime. Go + PostgreSQL di backend, Bun + React di frontend.
 Mendukung DM 1-on-1 dan grup, presence, typing indicator, read receipt, edit &
-hapus pesan, lampiran berkas, serta push notification untuk yang sedang tidak
-membuka aplikasi.
+hapus pesan, lampiran berkas, membalas pesan, menyebut orang (@), reaksi emoji,
+serta push notification untuk yang sedang tidak membuka aplikasi.
 
 Status: **MVP jalan end-to-end, dan sudah diuji untuk 1000 koneksi bersamaan.**
 Catatan operasional multi-instance ada di [docs/scaling.md](docs/scaling.md);
 keputusan seputar lampiran dan notifikasi di
 [docs/lampiran-dan-push.md](docs/lampiran-dan-push.md); turunan gambar dan
 permintaan sepotong di
-[docs/thumbnail-dan-range.md](docs/thumbnail-dan-range.md).
+[docs/thumbnail-dan-range.md](docs/thumbnail-dan-range.md); membalas, menyebut,
+dan bereaksi di [docs/balas-sebut-reaksi.md](docs/balas-sebut-reaksi.md).
 
 ## Menjalankan
 
@@ -217,13 +218,28 @@ POST   /api/push/subscribe        langganan dari browser
 POST   /api/push/unsubscribe      { endpoint }
 ```
 
+Balas, sebut, dan reaksi:
+
+```
+POST   /api/conversations/{id}/messages   { id, body, attachmentIds,
+                                            replyToId, mentionedUserIds, mentionsAll }
+POST   /api/conversations/{id}/mentions/ack  { seq }   turunkan penanda "ada yang menyebut kamu"
+POST   /api/messages/{id}/reactions          { emoji }
+DELETE /api/messages/{id}/reactions          { emoji }
+```
+
+`mentions/ack` sengaja TERPISAH dari `read`: menandai terbaca bergerak saat
+ruangnya dibuka, sedangkan sebutan baru padam setelah pesan yang memanggil
+namanya benar-benar terlihat di layar. Satu endpoint untuk keduanya berarti
+membuka percakapan sekilas sudah cukup untuk melupakan bahwa ada yang memanggil.
+
 ## Protokol WebSocket
 
 Client -> server:
 
 | type | payload |
 |---|---|
-| `sync` | `{ cursors: { [conversationId]: lastSeq } }` |
+| `sync` | `{ cursors: { [conversationId]: lastSeq }, reactionCursors: { [conversationId]: lastReactionSeq } }` |
 | `typing` | `{ conversationId, typing }` |
 | `read` | `{ conversationId, seq }` |
 
@@ -239,6 +255,8 @@ Server -> client:
 | `presence` | `{ userId, online }` |
 | `presence.snapshot` | `{ online: string[] }` |
 | `sync.batch` | `{ conversationId, messages: Message[] }` — susulan setelah reconnect, berkelompok |
+| `reaction.added` / `reaction.removed` | `{ conversationId, messageId, userId, emoji, reactionSeq }` — SELISIH, bukan ringkasan: ringkasan memuat "apakah aku ikut", dan siaran satu payload untuk semua orang |
+| `reaction.batch` | `{ conversationId, messages: [{ messageId, reactionSeq, reactions }] }` — susulan reaksi, dikirim ke satu koneksi jadi ringkasannya boleh lengkap |
 | `sync.complete` | `{}` |
 | `server.shutdown` | `{ reason }` — instance pamit terencana; sambung lagi sekarang, jangan mundur bertahap |
 | `error` | `{ message }` |
@@ -277,3 +295,22 @@ rentang yang diminta, pembuatan turunan beserta penolakan gambar yang terlalu
 banyak pikselnya, dan pembacaan orientasi EXIF pada berkas yang sengaja
 dipotong — yang terakhir menjaga berkas cacat berakhir sebagai error, bukan
 sebagai panic.
+
+Fase 9 menambah test untuk `internal/store`, lapisan yang sampai saat itu tidak
+punya satu test pun — dan justru lapisan tempat satu salah ketik dalam SQL
+berubah jadi kehilangan data, bukan jadi error compile. Yang diuji SQL-nya
+sendiri, jadi butuh Postgres sungguhan; tiap kali dijalankan seluruh skema
+dibuat baru dalam schema tersendiri lalu dibuang.
+
+**Dilewati otomatis bila databasenya tidak ada**, supaya `go test ./...` tetap
+hijau di mesin yang belum menyalakan docker — test yang tidak pernah dijalankan
+tidak melindungi apa pun.
+
+```bash
+docker compose up -d postgres
+cd server && go test ./internal/store/ -v
+
+# Database lain kalau tidak mau menyentuh yang dipakai aplikasi
+TEST_DATABASE_URL=postgres://chat:chat@localhost:5433/chatapp?sslmode=disable \
+  go test ./internal/store/
+```

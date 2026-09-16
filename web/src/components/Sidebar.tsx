@@ -134,11 +134,28 @@ export default function Sidebar() {
                 <span className="block truncate text-xs text-muted">{preview(c)}</span>
               </span>
 
-              {c.unread > 0 && (
-                <span className="rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-medium text-white">
-                  {c.unread > 99 ? '99+' : c.unread}
-                </span>
-              )}
+              <span className="flex shrink-0 items-center gap-1">
+                {/* Penanda sebutan berdiri SENDIRI, di samping badge belum
+                    dibaca — bukan menggantikannya.
+
+                    Keduanya menjawab pertanyaan yang berbeda: "ada berapa yang
+                    belum kubaca" dan "apakah ada yang memanggilku". Yang kedua
+                    bertahan walau yang pertama sudah nol, karena membuka ruang
+                    sekilas bukan berarti sudah melihat panggilannya. */}
+                {c.mentionSeq > c.mentionAckSeq && (
+                  <span
+                    title="Ada yang menyebut kamu"
+                    className="grid size-5 place-items-center rounded-full bg-amber-400 text-[11px] font-bold text-amber-950"
+                  >
+                    @
+                  </span>
+                )}
+                {c.unread > 0 && (
+                  <span className="rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-medium text-white">
+                    {c.unread > 99 ? '99+' : c.unread}
+                  </span>
+                )}
+              </span>
             </button>
           );
         })}

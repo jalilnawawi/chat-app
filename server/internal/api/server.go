@@ -112,6 +112,14 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/conversations/{id}/members", s.requireAuth(http.HandlerFunc(s.handleMembers)))
 	mux.Handle("POST /api/conversations/{id}/read", s.requireAuth(http.HandlerFunc(s.handleMarkRead)))
 
+	// Penanda sebutan punya endpoint SENDIRI, bukan menumpang /read. Keduanya
+	// bergerak pada saat yang berbeda: terbaca saat ruangnya dibuka, sebutan
+	// saat pesan yang memanggil namanya benar-benar terlihat. Satu endpoint
+	// untuk keduanya berarti membuka ruang sekilas sudah cukup untuk melupakan
+	// bahwa ada yang memanggil.
+	mux.Handle("POST /api/conversations/{id}/mentions/ack",
+		s.requireAuth(http.HandlerFunc(s.handleAckMentions)))
+
 	// Unggahan punya kuotanya sendiri, jauh lebih ketat dari kirim pesan: satu
 	// berkas bisa sepuluh megabyte yang melewati proses ini dua kali.
 	mux.Handle("POST /api/attachments",
@@ -130,6 +138,14 @@ func (s *Server) Routes() http.Handler {
 
 	mux.Handle("PATCH /api/messages/{id}", s.requireAuth(http.HandlerFunc(s.handleEditMessage)))
 	mux.Handle("DELETE /api/messages/{id}", s.requireAuth(http.HandlerFunc(s.handleDeleteMessage)))
+
+	// Reaksi punya kuotanya sendiri: memasang dan mencabut adalah dua
+	// permintaan yang bisa diulang secepat jari bergerak, dan tiap satunya
+	// menulis ke database.
+	mux.Handle("POST /api/messages/{id}/reactions",
+		s.requireAuth(s.rateLimitByUser("reaction", s.cfg.ReactionRate, http.HandlerFunc(s.handleAddReaction))))
+	mux.Handle("DELETE /api/messages/{id}/reactions",
+		s.requireAuth(s.rateLimitByUser("reaction", s.cfg.ReactionRate, http.HandlerFunc(s.handleRemoveReaction))))
 
 	// Membuka koneksi juga dibatasi. Handshake WebSocket jauh lebih mahal dari
 	// permintaan biasa — cek sesi, upgrade, dua goroutine, satu langganan

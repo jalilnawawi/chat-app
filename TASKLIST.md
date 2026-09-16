@@ -14,7 +14,11 @@ Turunan gambar & permintaan sepotong: **SELESAI** (15 Sep 2026) — foto 12
 megapiksel turun 474 kali, dan video panjang bisa dilompati. Lihat
 [docs/thumbnail-dan-range.md](docs/thumbnail-dan-range.md).
 
-Berikutnya: **Fase 9 — membalas, menyebut, dan bereaksi.**
+Membalas, menyebut, dan bereaksi: **SELESAI** (16 Sep 2026) — plus test
+pertama untuk `internal/store`, di atas harness Postgres yang dilewati sendiri
+bila databasenya tidak ada. Lihat [docs/balas-sebut-reaksi.md](docs/balas-sebut-reaksi.md).
+
+Berikutnya: **Fase 10 — kelola akun & profil.**
 
 Legend: `[ ]` belum · `[~]` jalan · `[x]` selesai
 
@@ -280,9 +284,11 @@ per-pesan sampai ke client" tiga kali dengan tiga jawaban yang berbeda.
 Referensinya SeaTalk ([seatalk.io](https://seatalk.io/features/communication)),
 yang aplikasinya tertutup — yang bisa dilihat cuma daftar fiturnya.
 
+Keputusan lengkap di [docs/balas-sebut-reaksi.md](docs/balas-sebut-reaksi.md).
+
 ### Balas / kutip
-- [ ] Kolom `reply_to_id` di `messages`, menunjuk ke tabelnya sendiri
-- [ ] Isi pesan yang dibalas diambil lewat SATU self-join per halaman riwayat,
+- [x] Kolom `reply_to_id` di `messages`, menunjuk ke tabelnya sendiri
+- [x] Isi pesan yang dibalas diambil lewat SATU self-join per halaman riwayat,
       **bukan disalin** ke dalam barisnya.
 
       Ini berbeda dari keputusan lampiran di Fase 7, dan perbedaannya disengaja:
@@ -290,56 +296,99 @@ yang aplikasinya tertutup — yang bisa dilihat cuma daftar fiturnya.
       terpasang. Isi pesan BERUBAH — diedit dan dihapus — jadi salinannya pasti
       basi. Self-join pada primary key murah, dan satu kali per halaman, bukan
       per pesan.
-- [ ] Pesan yang dibalas sudah dihapus → tampil sebagai "pesan dihapus", bukan
+- [x] Pesan yang dibalas sudah dihapus → tampil sebagai "pesan dihapus", bukan
       hilang. Yang diedit → tampil versi terbarunya. Keduanya konsekuensi wajar
       dari tidak menyalin, dan keduanya perilaku yang benar.
-- [ ] **Pesan yang dibalas WAJIB berada di percakapan yang sama.** Tanpa
+- [x] **Pesan yang dibalas WAJIB berada di percakapan yang sama.** Tanpa
       pemeriksaan ini, mengutip id pesan dari percakapan yang tidak kita ikuti
       akan menampilkan isinya — kebocoran yang bentuknya persis seperti fitur.
-- [ ] UI: gelembung kutipan yang bisa diklik untuk melompat ke pesan aslinya
+- [x] UI: gelembung kutipan yang bisa diklik untuk melompat ke pesan aslinya
 
 ### Mention
-- [ ] Client mengirim `mentionedUserIds` eksplisit, BUKAN server mengurai
+- [x] Client mengirim `mentionedUserIds` eksplisit, BUKAN server mengurai
       `@nama` dari teks. Nama tampilan boleh mengandung spasi, dan penguraian
       teks akan selalu punya kasus tepi; yang lebih penting, siapa yang
       dibangunkan tidak boleh ditentukan oleh cara sebuah string ditulis.
-- [ ] Server memvalidasi tiap id: harus anggota percakapan itu. Client tidak
+- [x] Server memvalidasi tiap id: harus anggota percakapan itu. Client tidak
       pernah dipercaya soal siapa yang berhak dibangunkan.
-- [ ] Mention **menembus peredam dering** Fase 7 — dering biasa tetap diredam
+- [x] Mention **menembus peredam dering** Fase 7 — dering biasa tetap diredam
       token bucket per percakapan, yang menyebut nama seseorang tidak. Inilah
       alasan fitur ini layak digabung dengan push yang sudah ada.
-- [ ] `@semua` untuk grup, dengan kuotanya sendiri — satu orang yang membangunkan
+- [x] `@semua` untuk grup, dengan kuotanya sendiri — satu orang yang membangunkan
       dua ratus orang sekaligus adalah hal yang harus dibatasi, bukan dilarang
-- [ ] Penanda unread terpisah: "ada yang menyebut kamu" berbeda dari "ada pesan
+- [x] Penanda unread terpisah: "ada yang menyebut kamu" berbeda dari "ada pesan
       baru", dan bertahan walau percakapannya sudah dibuka sekilas
 
 ### Reaksi
-- [ ] Tabel `message_reactions` dengan primary key `(message_id, user_id, emoji)`
+- [x] Tabel `message_reactions` dengan primary key `(message_id, user_id, emoji)`
       — satu orang boleh memberi beberapa emoji berbeda, tapi tidak bisa
       memberi emoji yang sama dua kali. Bentuk kuncinya yang memaksakan itu,
       bukan kode aplikasi.
-- [ ] Diringkas per halaman riwayat dalam satu query beragregasi, bukan satu
+- [x] Diringkas per halaman riwayat dalam satu query beragregasi, bukan satu
       query per pesan
-- [ ] Event WS `reaction.added` / `reaction.removed`, dan ikut menyusul lewat
+- [x] Event WS `reaction.added` / `reaction.removed`, dan ikut menyusul lewat
       jalur resume seperti event lain — reaksi yang muncul saat kita offline
       tetap harus terlihat saat menyambung lagi
-- [ ] Emoji divalidasi panjangnya dan harus berupa satu grafem; kolom teks bebas
+- [x] Emoji divalidasi panjangnya dan harus berupa satu grafem; kolom teks bebas
       di sini berarti pesan kedua yang menyamar jadi reaksi
-- [ ] Kuota sendiri: menekan dan melepas reaksi adalah dua permintaan yang bisa
+- [x] Kuota sendiri: menekan dan melepas reaksi adalah dua permintaan yang bisa
       diulang secepat jari bergerak
-- [ ] Reaksi TIDAK membangunkan notifikasi push
+- [x] Reaksi TIDAK membangunkan notifikasi push
 
 ### Test untuk `internal/store`, disisipkan sambil jalan
 Bukan fase tersendiri. Fase ini menambah SQL baru ke satu-satunya paket yang
 sampai sekarang tidak punya satu test pun — dan itu justru lapisan tempat satu
 salah ketik berubah jadi kehilangan data.
 
-- [ ] Harness Postgres untuk test (container sekali pakai atau skema sementara),
+- [x] Harness Postgres untuk test (container sekali pakai atau skema sementara),
       dilewati otomatis bila database tidak tersedia supaya `go test` tetap
       hijau di mesin yang belum menyalakan docker
-- [ ] Test untuk SQL yang ditulis di fase ini
-- [ ] Test untuk yang paling mudah rusak diam-diam dari fase sebelumnya:
+- [x] Test untuk SQL yang ditulis di fase ini
+- [x] Test untuk yang paling mudah rusak diam-diam dari fase sebelumnya:
       idempotensi kirim pesan, pemasangan lampiran, dan izin baca lampiran
+
+### Verifikasi
+- [x] `go vet` + `go test -race ./...` bersih; 20 test baru untuk store, plus
+      test validasi emoji yang ikut menjaga batas panjangnya tetap lebih ketat
+      daripada CHECK di database
+- [x] `tsc --noEmit` + `vite build` bersih
+- [x] Uji HTTP langsung: kutipan lintas percakapan (403), sebutan orang luar
+      (403), reaksi berupa kalimat dan dua emoji sekaligus (400), reaksi orang
+      luar (404), penekanan kembar yang tidak memajukan jam, kuota @semua (429
+      dengan `Retry-After: 120`), dan @semua di DM yang tersimpan sebagai false
+- [x] Uji WebSocket langsung: client yang cursor pesannya sudah lengkap tapi
+      cursor reaksinya nol menerima `reaction.batch` berisi keadaan terkini —
+      termasuk pencabutan yang terjadi selagi dia offline
+- [x] Verifikasi browser (Brave, dua konteks terpisah, puppeteer-core): 36/36
+      lulus dalam dua putaran — balas, kutipan yang mengikuti edit, reaksi
+      realtime yang hitungannya tidak pernah ganda, pemilih sebutan yang
+      menyisipkan nama bersisipan spasi, penanda @ yang bertahan setelah
+      ruangnya dibaca lalu padam setelah pesannya terlihat, dan lompat ke pesan
+      yang dikutip yang halamannya belum termuat
+
+### Tiga hal yang ditemukan OLEH menjalankannya di browser
+Ketiganya lolos `tsc`, lolos `go test`, dan tidak satu pun bisa ditangkap test
+mana pun yang tidak membuka halamannya. Uraian lengkap di
+[docs/balas-sebut-reaksi.md](docs/balas-sebut-reaksi.md).
+
+1. **Seluruh tombol aksi tidak bisa dijangkau dari ponsel.** `group-hover:` di
+   Tailwind v4 dibungkus `@media (hover: hover)`, dan perangkat tanpa penunjuk
+   melaporkan `hover: none` — jadi balas, edit, hapus, dan tombol tambah reaksi
+   bukan "sulit ditemukan" melainkan tidak ada sama sekali. Berlaku sejak Fase 4
+   untuk edit dan hapus; yang menemukannya adalah browser headless, yang
+   kebetulan berperilaku persis seperti ponsel.
+2. **Read receipt menanam larik kosong di daftar anggota.** `applyRead` menulis
+   `(members[id] ?? []).map(...)` kembali ke state, dan larik kosong itu tidak
+   bisa dibedakan dari "sudah dimuat, memang kosong". Read receipt datang jauh
+   lebih sering daripada orang membuka percakapan, jadi keadaannya nyaris
+   permanen: judul grup "0 anggota", pengirim "Seseorang", sebutan tidak pernah
+   tersorot. Tidak terlihat di DM — dan seluruh verifikasi browser Fase 6-8
+   memakai DM.
+3. **Daftar anggota menumpang syarat milik riwayat.** `openConversation` memuat
+   keduanya di balik `!messages[id]`, padahal `messages[id]` bisa terisi tanpa
+   riwayat pernah dimuat: satu pesan yang datang lewat WebSocket sudah cukup.
+   Bentuk kegagalannya sama persis dengan nomor 2, dan itu yang membuatnya
+   sempat tersembunyi di baliknya.
 
 ### Yang sengaja TIDAK dikerjakan di fase ini
 - **Panggilan suara/video.** Yang terbesar dari daftar SeaTalk, dan jalurnya

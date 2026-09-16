@@ -110,6 +110,15 @@ type Config struct {
 	TypingRate  ratelimit.Rule
 	AuthRate    ratelimit.Rule
 	UploadRate  ratelimit.Rule
+	// ReactionRate melindungi jalur yang paling mudah diulang dengan jari:
+	// menekan dan melepas emoji adalah dua permintaan yang bisa datang secepat
+	// tombolnya bisa diklik, dan tiap satunya menulis ke database.
+	ReactionRate ratelimit.Rule
+	// MentionAllRate dihitung per user PER PERCAKAPAN. Satu orang yang
+	// membangunkan dua ratus orang sekaligus adalah hal yang harus dibatasi,
+	// bukan dilarang — yang tidak boleh adalah mengulanginya tiap beberapa
+	// detik.
+	MentionAllRate ratelimit.Rule
 	// PushRate bukan kuota melawan penyalahgunaan, melainkan peredam dering:
 	// berapa kali sebuah percakapan boleh membangunkan satu orang. Bentuknya
 	// token bucket yang sama karena masalahnya memang sama — dan versi
@@ -224,6 +233,18 @@ func Load() (Config, error) {
 	// Unggahan jauh lebih mahal dari pesan teks — satu berkas bisa sepuluh
 	// megabyte yang melewati proses ini dua kali, masuk dan keluar.
 	if c.UploadRate, err = envRule("RATE_UPLOADS", 10, 60); err != nil {
+		return Config{}, err
+	}
+	// Reaksi jauh lebih longgar dari pesan: menekan lima emoji beruntun pada
+	// satu pesan lucu adalah perilaku manusia yang wajar, dan tiap penekanan
+	// jauh lebih murah daripada satu pesan.
+	if c.ReactionRate, err = envRule("RATE_REACTIONS", 30, 240); err != nil {
+		return Config{}, err
+	}
+	// Dua @semua beruntun untuk satu percakapan, lalu satu tiap dua menit.
+	// Angkanya dipilih dari cara rapat sungguhan diumumkan, bukan dari
+	// kemampuan server mengirim.
+	if c.MentionAllRate, err = envRule("RATE_MENTION_ALL", 2, 0.5); err != nil {
 		return Config{}, err
 	}
 	// Satu dering per percakapan tiap 30 detik, dengan kelonggaran dua di awal

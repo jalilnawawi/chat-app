@@ -35,6 +35,36 @@ export type Attachment = {
   thumbUrl?: string;
 };
 
+/**
+ * Secuil pesan yang dibalas, secukupnya untuk gelembung kutipan.
+ *
+ * Datang dari self-join di server dan TIDAK pernah disalin ke baris
+ * pembalasnya, jadi isinya selalu keadaan terbaru: yang sudah diedit tampil
+ * versi barunya, yang sudah dihapus tampil dengan `deleted: true`.
+ */
+export type ReplyPreview = {
+  id: string;
+  seq: number;
+  senderId: string;
+  body: string;
+  deleted: boolean;
+  /** Diisi bila pesannya tidak punya teks sama sekali, hanya lampiran. */
+  kind?: 'image' | 'video' | 'audio' | 'file';
+};
+
+/**
+ * Satu emoji pada satu pesan, sudah dihitung di server.
+ *
+ * `mine` adalah satu-satunya bagian sebuah pesan yang jawabannya berbeda per
+ * pembaca — dan itu sebabnya siaran reaksi membawa SELISIH, bukan ringkasan
+ * ini. Lihat catatan di store.applyReaction.
+ */
+export type ReactionSummary = {
+  emoji: string;
+  count: number;
+  mine: boolean;
+};
+
 export type Message = {
   id: string;
   conversationId: string;
@@ -45,6 +75,21 @@ export type Message = {
   createdAt: string;
   editedAt: string | null;
   deletedAt: string | null;
+  /** null berarti pesan ini tidak membalas apa pun. */
+  replyTo?: ReplyPreview;
+  /** Id yang disebut, sudah lolos pemeriksaan keanggotaan di server. */
+  mentions: string[];
+  mentionsAll: boolean;
+  reactions: ReactionSummary[];
+  /**
+   * Jam kedua: nilai penghitung reaksi percakapan saat terakhir kali reaksi
+   * pesan ini berubah. Nol berarti belum pernah ada yang bereaksi.
+   *
+   * Dia dipakai untuk dua hal: cursor resume kedua (di samping `seq`), dan
+   * gerbang yang membuat satu perubahan tidak pernah terpasang dua kali —
+   * event yang sama datang lewat jawaban HTTP DAN lewat siaran WebSocket.
+   */
+  reactionSeq: number;
 };
 
 export type Member = {
@@ -65,6 +110,16 @@ export type Conversation = {
   peer: User | null;
   lastMessage: Message | null;
   updatedAt: string;
+  /**
+   * mentionSeq > mentionAckSeq berarti ada yang menyebut nama kita dan kita
+   * belum sampai ke pesannya.
+   *
+   * Sengaja dua angka, terpisah dari lastReadSeq. "Ada pesan baru" hilang
+   * begitu ruangnya dibuka; "ada yang memanggil kamu" tidak boleh hilang
+   * sampai pesannya benar-benar terlihat.
+   */
+  mentionSeq: number;
+  mentionAckSeq: number;
 };
 
 /** Pesan yang sudah tampil di layar tapi belum dikonfirmasi server. */
@@ -75,6 +130,23 @@ export type PendingMessage = {
   attachments: Attachment[];
   createdAt: string;
   status: 'sending' | 'failed';
+  replyTo?: ReplyPreview;
+  /**
+   * Ikut disimpan supaya "coba lagi" mengirim pesan yang SAMA — termasuk siapa
+   * yang disebut. Pengiriman ulang yang kehilangan sebutannya adalah pesan
+   * yang tidak membangunkan siapa pun, dan itu tidak terlihat oleh
+   * pengirimnya.
+   */
+  mentionedUserIds: string[];
+  mentionsAll: boolean;
+  /**
+   * Sebab kegagalan, ditampilkan di samping tombol coba lagi.
+   *
+   * Tanpa ini, pesan yang ditolak karena kuota @semua terlihat persis sama
+   * dengan pesan yang gagal karena jaringan — dan orang menekan "coba lagi"
+   * berulang kali untuk penolakan yang memang belum waktunya berubah.
+   */
+  error?: string;
 };
 
 /**
@@ -124,6 +196,38 @@ export type ServerEvent =
    */
   | { type: 'sync.batch'; payload: { conversationId: string; messages: Message[] } }
   | { type: 'sync.complete'; payload: Record<string, never> }
+  /**
+   * Perubahan reaksi, satu penekanan per event.
+   *
+   * Yang dikirim adalah SELISIH, bukan ringkasan jadi: ringkasan memuat
+   * "apakah aku ikut", dan siaran adalah satu payload yang sama untuk semua
+   * orang. Client menerapkannya pada hitungan yang sudah dia punya.
+   */
+  | {
+      type: 'reaction.added' | 'reaction.removed';
+      payload: {
+        conversationId: string;
+        messageId: string;
+        userId: string;
+        emoji: string;
+        reactionSeq: number;
+      };
+    }
+  /**
+   * Susulan reaksi setelah reconnect, dan ini dikirim ke SATU koneksi — jadi
+   * ringkasan lengkap beserta `mine` memang boleh ada di sini.
+   *
+   * Reaksi tidak pernah muat di cursor `seq`: dia mengubah pesan lama, yang
+   * seq-nya sudah berhenti bergerak. Tanpa jalur ini, menutup laptop lalu
+   * membukanya lagi menghasilkan riwayat lengkap dengan reaksi yang hilang.
+   */
+  | {
+      type: 'reaction.batch';
+      payload: {
+        conversationId: string;
+        messages: { messageId: string; reactionSeq: number; reactions: ReactionSummary[] }[];
+      };
+    }
   /**
    * Server pamit terencana (rolling deploy). Bedanya dengan koneksi yang putus
    * begitu saja: instance pengganti SUDAH siap, jadi client boleh menyambung

@@ -9,12 +9,19 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/jalilnawawi/chat-app/server/internal/hub"
+	"github.com/jalilnawawi/chat-app/server/internal/store"
 )
 
 const (
 	defaultPageSize = 50
 	maxPageSize     = 100
 	maxMessageLen   = 4000
+
+	// maxMentionsPerMessage membatasi penyebutan satu per satu. Yang ingin
+	// membangunkan lebih banyak orang dari ini sebenarnya sedang memaksudkan
+	// @semua — dan @semua punya kuotanya sendiri, justru supaya jalan ini tidak
+	// dipakai untuk menghindarinya.
+	maxMentionsPerMessage = 50
 )
 
 func (s *Server) handleSearchUsers(w http.ResponseWriter, r *http.Request) {
@@ -101,6 +108,7 @@ func (s *Server) handleMembers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
+	me := userFrom(r.Context())
 	convID, ok := s.authorizedConversation(w, r)
 	if !ok {
 		return
@@ -114,7 +122,9 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		limit = min(v, maxPageSize)
 	}
 
-	messages, err := s.store.ListMessages(r.Context(), convID, before, limit)
+	// Pembaca ikut disebut karena ringkasan reaksi memuat "apakah aku ikut" —
+	// satu-satunya bagian sebuah pesan yang jawabannya berbeda per orang.
+	messages, err := s.store.ListMessages(r.Context(), convID, me.ID, before, limit)
 	if err != nil {
 		s.writeStoreError(w, err, "list messages")
 		return
@@ -145,6 +155,24 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		// dan bisa gagal sendiri, sedangkan pengiriman pesan harus tetap satu
 		// tindakan yang cepat dan punya jawaban pasti.
 		AttachmentIDs []uuid.UUID `json:"attachmentIds"`
+
+		// ReplyToID menunjuk pesan yang dibalas. Pemeriksaan bahwa pesan itu
+		// berada di percakapan yang SAMA dilakukan di store, di dalam transaksi
+		// pengiriman — lihat catatan kebocoran di store.replyPreview.
+		ReplyToID *uuid.UUID `json:"replyToId"`
+
+		// MentionedUserIDs dikirim EKSPLISIT oleh client; server tidak pernah
+		// mengurai "@nama" dari teks.
+		//
+		// Nama tampilan boleh mengandung spasi, jadi penguraian teks akan
+		// selalu punya kasus tepi — tapi bukan itu alasan utamanya. Alasan
+		// utamanya: siapa yang dibangunkan tidak boleh ditentukan oleh cara
+		// sebuah string kebetulan ditulis. Orang yang menulis "kirim ke
+		// @budi ya" dalam kalimat biasa tidak sedang memanggil Budi, dan orang
+		// yang mengganti nama tampilannya tidak boleh membuat pesan lama
+		// berhenti memanggilnya.
+		MentionedUserIDs []uuid.UUID `json:"mentionedUserIds"`
+		MentionsAll      bool        `json:"mentionsAll"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "body tidak valid")
@@ -179,8 +207,37 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "lampiran yang sama disebut lebih dari sekali")
 		return
 	}
+	if len(req.MentionedUserIDs) > maxMentionsPerMessage {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("maksimal %d sebutan per pesan", maxMentionsPerMessage))
+		return
+	}
 
-	msg, created, err := s.store.SendMessage(r.Context(), req.ID, convID, me.ID, req.Body, req.AttachmentIDs)
+	// @semua punya kuotanya sendiri, terpisah dari kuota pesan biasa, dan
+	// dihitung per percakapan.
+	//
+	// Satu orang yang membangunkan dua ratus orang sekaligus adalah hal yang
+	// harus DIBATASI, bukan dilarang: rapat yang benar-benar mendesak memang
+	// ada. Yang tidak boleh ada adalah kemampuan mengulanginya setiap beberapa
+	// detik. Kuncinya memakai token bucket yang sama dengan kuota lain, jadi
+	// batasnya tetap satu walau koneksinya tersebar ke beberapa instance.
+	if req.MentionsAll {
+		key := "mentionall:" + me.ID.String() + ":" + convID.String()
+		if !s.allow(w, r, "mention_all", key, s.cfg.MentionAllRate) {
+			return
+		}
+	}
+
+	msg, created, err := s.store.SendMessage(r.Context(), store.SendParams{
+		ID:             req.ID,
+		ConversationID: convID,
+		SenderID:       me.ID,
+		Body:           req.Body,
+		AttachmentIDs:  req.AttachmentIDs,
+		ReplyToID:      req.ReplyToID,
+		Mentions:       req.MentionedUserIDs,
+		MentionsAll:    req.MentionsAll,
+	})
 	if err != nil {
 		s.writeStoreError(w, err, "send message")
 		return
@@ -285,6 +342,40 @@ func (s *Server) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 		"lastReadSeq":    current,
 	}})
 	writeJSON(w, http.StatusOK, map[string]any{"lastReadSeq": current})
+}
+
+// handleAckMentions menurunkan penanda "ada yang menyebut kamu".
+//
+// Terpisah dari /read dengan sengaja, dan itu seluruh gunanya. Menandai
+// terbaca terjadi begitu percakapannya dibuka; ini baru terjadi setelah pesan
+// yang menyebut namanya benar-benar muncul di layar orangnya. Membuka ruang
+// sekilas untuk mengintip tidak boleh menghapus panggilan yang belum dilihat —
+// dan kalau keduanya dijadikan satu endpoint, dia akan menghapusnya.
+func (s *Server) handleAckMentions(w http.ResponseWriter, r *http.Request) {
+	me := userFrom(r.Context())
+	convID, ok := s.authorizedConversation(w, r)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Seq int64 `json:"seq"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "body tidak valid")
+		return
+	}
+
+	current, err := s.store.AckMentions(r.Context(), convID, me.ID, req.Seq)
+	if err != nil {
+		s.writeStoreError(w, err, "ack sebutan")
+		return
+	}
+
+	// Tidak disiarkan ke siapa pun. Sejauh mana seseorang sudah melihat
+	// panggilan untuk dirinya sendiri bukan urusan anggota lain — berbeda
+	// dengan read receipt, yang memang ditujukan untuk dilihat lawan bicara.
+	writeJSON(w, http.StatusOK, map[string]any{"mentionAckSeq": current})
 }
 
 // ---------- helper ----------

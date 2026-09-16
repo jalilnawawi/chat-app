@@ -63,10 +63,15 @@ type Metrics struct {
 	RangeRequests *prometheus.CounterVec
 
 	// ---- Push notification ----
-	PushSent     *prometheus.CounterVec
-	PushSkipped  *prometheus.CounterVec
-	PushDropped  prometheus.Counter
-	PushDuration prometheus.Histogram
+	PushSent    *prometheus.CounterVec
+	PushSkipped *prometheus.CounterVec
+	PushDropped prometheus.Counter
+	// PushMentionBypass menghitung kabar yang MELEWATI peredam dering karena
+	// menyebut nama penerimanya. Dipisahkan dari skipped_total supaya
+	// "peredamnya bekerja" dan "peredamnya ditembus" tidak pernah terbaca
+	// sebagai satu angka.
+	PushMentionBypass prometheus.Counter
+	PushDuration      prometheus.Histogram
 
 	// ---- Rate limit ----
 	RateLimited *prometheus.CounterVec
@@ -215,6 +220,11 @@ func New() *Metrics {
 		Help: "Notifikasi yang sengaja TIDAK dikirim, per alasan (online, debounce).",
 	}, []string{"reason"})
 
+	m.PushMentionBypass = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: namespace, Subsystem: "push", Name: "mention_bypass_total",
+		Help: "Notifikasi yang menembus peredam dering karena menyebut nama penerimanya.",
+	})
+
 	m.PushDropped = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: namespace, Subsystem: "push", Name: "dropped_total",
 		Help: "Notifikasi yang dibuang karena antrean pengirim penuh.",
@@ -249,7 +259,7 @@ func New() *Metrics {
 		m.RedisPublishDuration, m.RedisErrors, m.RedisSubscriptions,
 		m.AttachmentUploads, m.AttachmentBytes, m.AttachmentDownloads, m.AttachmentSwept,
 		m.Thumbnails, m.ThumbnailBytes, m.ThumbnailSeconds, m.RangeRequests,
-		m.PushSent, m.PushSkipped, m.PushDropped, m.PushDuration,
+		m.PushSent, m.PushSkipped, m.PushDropped, m.PushMentionBypass, m.PushDuration,
 		m.RateLimited, m.Draining, m.BuildInfo,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),

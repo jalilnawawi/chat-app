@@ -231,6 +231,7 @@ func (s *Store) CreateGroup(ctx context.Context, creator uuid.UUID, title string
 func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conversation, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT c.id, c.type, c.title, c.last_seq, cm.last_read_seq, c.created_at,
+		       cm.mention_seq, cm.mention_ack_seq,
 		       lm.id, lm.seq, lm.sender_id, lm.body, lm.attachments,
 		       lm.created_at, lm.edited_at, lm.deleted_at,
 		       peer.id, peer.username, peer.display_name, peer.created_at
@@ -275,6 +276,7 @@ func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conv
 		)
 		if err := rows.Scan(
 			&c.ID, &c.Type, &c.Title, &c.LastSeq, &c.LastReadSeq, &created,
+			&c.MentionSeq, &c.MentionAckSeq,
 			&msgID, &msgSeq, &msgFrom, &msgBody, &msgAtt, &msgAt, &msgEdit, &msgDel,
 			&peerID, &peerUser, &peerName, &peerAt,
 		); err != nil {
@@ -285,10 +287,15 @@ func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conv
 		c.UpdatedAt = created
 
 		if msgID != nil {
+			// Sengaja tanpa kutipan, sebutan, maupun reaksi: ini cuma baris
+			// pratinjau di sidebar, dan tiga metadata tambahan untuk satu baris
+			// teks yang dipotong berarti membayar join dan agregasi untuk
+			// SETIAP percakapan yang dimiliki seseorang.
 			c.LastMessage = &Message{
 				ID: *msgID, ConversationID: c.ID, Seq: *msgSeq, SenderID: *msgFrom,
 				Body: *msgBody, Attachments: msgAtt,
 				CreatedAt: *msgAt, EditedAt: msgEdit, DeletedAt: msgDel,
+				Mentions: []uuid.UUID{}, Reactions: []ReactionSummary{},
 			}
 			c.UpdatedAt = *msgAt
 		}
@@ -382,13 +389,130 @@ func (s *Store) ConversationsOf(ctx context.Context, userID uuid.UUID) ([]uuid.U
 // Menambahkan `attachments` di Fase 7 adalah kali pertama itu benar-benar
 // diuji — dan yang membuatnya aman adalah daftar kolom dan urutan Scan hidup
 // bersebelahan di bawah ini.
-const messageCols = `id, conversation_id, seq, sender_id, body, attachments,
-                     created_at, edited_at, deleted_at`
+//
+// Sejak Fase 9 daftarnya butuh alias tabel: query pesan sekarang selalu
+// menyertakan self-join ke tabel yang sama, dan `id` tanpa kualifikasi menjadi
+// ambigu. Alasan yang sama dengan attachmentCols di attachments.go — aliasnya
+// ditempelkan ke SETIAP kolom, bukan hanya ke yang pertama.
+func messageCols(alias string) string {
+	return prefix(alias, "id", "conversation_id", "seq", "sender_id", "body",
+		"attachments", "created_at", "edited_at", "deleted_at",
+		"mentions", "mentions_all", "reaction_seq")
+}
+
+// replyCols adalah kolom pesan YANG DIBALAS, dibaca lewat self-join.
+//
+// Isinya tidak pernah disalin ke baris pembalasnya, jadi kutipan selalu
+// menampilkan keadaan terbaru: yang sudah diedit tampil versi barunya, yang
+// sudah dihapus tampil sebagai "pesan dihapus".
+func replyCols(alias string) string {
+	return prefix(alias, "id", "seq", "sender_id", "body", "attachments", "deleted_at")
+}
+
+func prefix(alias string, cols ...string) string {
+	if alias != "" {
+		alias += "."
+	}
+	out := make([]string, len(cols))
+	for i, c := range cols {
+		out[i] = alias + c
+	}
+	return strings.Join(out, ", ")
+}
+
+// messageSelect menyusun pembacaan pesan lengkap dengan kutipannya.
+//
+// Self-join-nya SATU per query, bukan satu per pesan: dia menempel pada primary
+// key tabel yang sama, dan Postgres menjawabnya dengan satu lookup index per
+// baris yang memang punya `reply_to_id`. Halaman berisi seratus pesan yang tak
+// satu pun membalas apa pun tidak membayar apa-apa untuk join ini.
+func messageSelect(where string) string {
+	return `SELECT ` + messageCols("m") + `, ` + replyCols("rep") + `
+		FROM messages m
+		LEFT JOIN messages rep ON rep.id = m.reply_to_id
+		WHERE ` + where
+}
 
 // scanMessage menerima pgx.Row maupun pgx.Rows — keduanya punya Scan yang sama.
 func scanMessage(row pgx.Row, m *Message) error {
-	return row.Scan(&m.ID, &m.ConversationID, &m.Seq, &m.SenderID, &m.Body,
-		&m.Attachments, &m.CreatedAt, &m.EditedAt, &m.DeletedAt)
+	var (
+		repID      *uuid.UUID
+		repSeq     *int64
+		repSender  *uuid.UUID
+		repBody    *string
+		repAtts    []Attachment
+		repDeleted *time.Time
+	)
+	if err := row.Scan(&m.ID, &m.ConversationID, &m.Seq, &m.SenderID, &m.Body,
+		&m.Attachments, &m.CreatedAt, &m.EditedAt, &m.DeletedAt,
+		&m.Mentions, &m.MentionsAll, &m.ReactionSeq,
+		&repID, &repSeq, &repSender, &repBody, &repAtts, &repDeleted,
+	); err != nil {
+		return err
+	}
+
+	if m.Mentions == nil {
+		m.Mentions = []uuid.UUID{}
+	}
+	// Reaksi diisi terpisah oleh pemanggil yang tahu siapa pembacanya; yang
+	// tidak tahu tetap mengirim larik kosong, bukan null.
+	m.Reactions = []ReactionSummary{}
+
+	if repID != nil {
+		m.ReplyTo = &ReplyPreview{
+			ID: *repID, Seq: *repSeq, SenderID: *repSender,
+			Body: *repBody, Deleted: repDeleted != nil,
+		}
+		if !m.ReplyTo.Deleted && m.ReplyTo.Body == "" {
+			m.ReplyTo.Kind = attachmentKind(repAtts)
+		}
+	}
+	return nil
+}
+
+// attachmentKind memberi satu kata untuk pesan yang isinya hanya lampiran.
+// Kutipan tanpa ini tampil sebagai baris kosong — yang terbaca seperti pesan
+// kosong, bukan seperti foto yang sedang dibalas.
+func attachmentKind(atts []Attachment) string {
+	if len(atts) == 0 {
+		return ""
+	}
+	switch mime := atts[0].MIME; {
+	case strings.HasPrefix(mime, "image/"):
+		return "image"
+	case strings.HasPrefix(mime, "video/"):
+		return "video"
+	case strings.HasPrefix(mime, "audio/"):
+		return "audio"
+	default:
+		return "file"
+	}
+}
+
+// SendParams mengumpulkan segala yang menentukan sebuah pesan.
+//
+// Ditulis sebagai struct sejak Fase 9 karena daftarnya tumbuh dari lima jadi
+// delapan, dan tiga di antaranya adalah id yang tipenya sama persis — `id`,
+// `convID`, `senderID`, dan sekarang `replyToID`. Argumen posisional yang
+// tipenya seragam adalah tempat di mana dua parameter tertukar tanpa satu pun
+// peringatan compiler.
+type SendParams struct {
+	ID             uuid.UUID
+	ConversationID uuid.UUID
+	SenderID       uuid.UUID
+	Body           string
+
+	// AttachmentIDs menunjuk lampiran yang sudah diunggah lebih dulu.
+	AttachmentIDs []uuid.UUID
+
+	// ReplyToID nil berarti bukan balasan. Bila diisi, pesannya WAJIB berada di
+	// percakapan yang sama — lihat pemeriksaannya di bawah.
+	ReplyToID *uuid.UUID
+
+	// Mentions datang dari client dan TIDAK dipercaya: tiap id diperiksa
+	// keanggotaannya di dalam transaksi ini.
+	Mentions    []uuid.UUID
+	MentionsAll bool
 }
 
 // SendMessage menyisipkan pesan dan mengalokasikan `seq` berikutnya.
@@ -401,19 +525,25 @@ func scanMessage(row pgx.Row, m *Message) error {
 // di ruang yang sama diserialisasi — `seq` dijamin berurutan tanpa lompatan,
 // dan pengecekan duplikat di dalam kunci selalu akurat.
 //
-// attachmentIDs menunjuk lampiran yang sudah diunggah lebih dulu. Pemasangannya
-// ikut di dalam transaksi yang sama: sebuah pesan tidak boleh pernah terlihat
-// tanpa lampiran yang menyertainya, sekalipun untuk sepersekian detik.
-func (s *Store) SendMessage(ctx context.Context, id, convID, senderID uuid.UUID, body string, attachmentIDs []uuid.UUID) (Message, bool, error) {
+// Lampiran, kutipan, dan sebutan semuanya diselesaikan di dalam transaksi yang
+// sama: sebuah pesan tidak boleh pernah terlihat tanpa salah satunya, sekalipun
+// untuk sepersekian detik.
+func (s *Store) SendMessage(ctx context.Context, p SendParams) (Message, bool, error) {
+	convID, senderID := p.ConversationID, p.SenderID
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Message{}, false, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	var lastSeq int64
+	var (
+		lastSeq  int64
+		convType string
+	)
 	err = tx.QueryRow(ctx,
-		`SELECT last_seq FROM conversations WHERE id = $1 FOR UPDATE`, convID).Scan(&lastSeq)
+		`SELECT last_seq, type FROM conversations WHERE id = $1 FOR UPDATE`, convID,
+	).Scan(&lastSeq, &convType)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Message{}, false, ErrNotFound
 	}
@@ -422,8 +552,7 @@ func (s *Store) SendMessage(ctx context.Context, id, convID, senderID uuid.UUID,
 	}
 
 	var existing Message
-	err = scanMessage(tx.QueryRow(ctx,
-		`SELECT `+messageCols+` FROM messages WHERE id = $1`, id), &existing)
+	err = scanMessage(tx.QueryRow(ctx, messageSelect(`m.id = $1`), p.ID), &existing)
 	if err == nil {
 		if existing.ConversationID != convID || existing.SenderID != senderID {
 			return Message{}, false, ErrConflict
@@ -434,28 +563,49 @@ func (s *Store) SendMessage(ctx context.Context, id, convID, senderID uuid.UUID,
 		return Message{}, false, fmt.Errorf("check duplicate: %w", err)
 	}
 
+	// @semua hanya punya arti di grup. Di DM dia cuma cara lain untuk menembus
+	// peredam dering, dan menembusnya tanpa menyebut siapa pun.
+	mentionsAll := p.MentionsAll && convType == "group"
+
+	// Pengirim dikeluarkan dari daftar: yang disimpan di sini adalah daftar
+	// orang yang perlu DIBANGUNKAN, dan tidak ada yang perlu dibangunkan oleh
+	// dirinya sendiri.
+	mentions := withoutDuplicates(p.Mentions, senderID)
+
+	replyTo, err := replyPreview(ctx, tx, p.ReplyToID, convID)
+	if err != nil {
+		return Message{}, false, err
+	}
+
 	seq := lastSeq + 1
 	m := Message{
-		ID: id, ConversationID: convID, Seq: seq, SenderID: senderID,
-		Body: body, Attachments: []Attachment{},
+		ID: p.ID, ConversationID: convID, Seq: seq, SenderID: senderID,
+		Body: p.Body, Attachments: []Attachment{},
+		ReplyTo: replyTo, Mentions: mentions, MentionsAll: mentionsAll,
+		Reactions: []ReactionSummary{},
 	}
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO messages (id, conversation_id, seq, sender_id, body)
-		VALUES ($1, $2, $3, $4, $5) RETURNING created_at`,
-		id, convID, seq, senderID, body,
+		INSERT INTO messages (id, conversation_id, seq, sender_id, body,
+		                      reply_to_id, mentions, mentions_all)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING created_at`,
+		p.ID, convID, seq, senderID, p.Body, p.ReplyToID, mentions, mentionsAll,
 	).Scan(&m.CreatedAt); err != nil {
 		return Message{}, false, fmt.Errorf("insert message: %w", err)
+	}
+
+	if err := markMentioned(ctx, tx, convID, senderID, seq, mentions, mentionsAll); err != nil {
+		return Message{}, false, err
 	}
 
 	// Lampiran dipasang setelah baris pesan ada — foreign key-nya menuntut itu —
 	// lalu hasilnya disalin ke kolom jsonb milik pesan. Salinan itu yang dibaca
 	// saat menampilkan riwayat, sehingga memuat seratus pesan tetap satu query.
-	if m.Attachments, err = claimAttachments(ctx, tx, id, senderID, attachmentIDs); err != nil {
+	if m.Attachments, err = claimAttachments(ctx, tx, p.ID, senderID, p.AttachmentIDs); err != nil {
 		return Message{}, false, err
 	}
 	if len(m.Attachments) > 0 {
 		if _, err := tx.Exec(ctx,
-			`UPDATE messages SET attachments = $1 WHERE id = $2`, m.Attachments, id); err != nil {
+			`UPDATE messages SET attachments = $1 WHERE id = $2`, m.Attachments, p.ID); err != nil {
 			return Message{}, false, fmt.Errorf("simpan lampiran pesan: %w", err)
 		}
 	}
@@ -479,21 +629,133 @@ func (s *Store) SendMessage(ctx context.Context, id, convID, senderID uuid.UUID,
 	return m, true, nil
 }
 
+// withoutDuplicates membersihkan daftar id: buang yang kembar dan buang
+// `drop`, dengan urutan aslinya tetap terjaga.
+func withoutDuplicates(ids []uuid.UUID, drop uuid.UUID) []uuid.UUID {
+	out := make([]uuid.UUID, 0, len(ids))
+	seen := make(map[uuid.UUID]struct{}, len(ids))
+	for _, id := range ids {
+		if id == drop {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+// replyPreview membaca pesan yang dibalas, sekaligus MEMERIKSA bahwa pesan itu
+// berada di percakapan yang sama.
+//
+// Pemeriksaan itu bukan kerapian, melainkan gerbang kebocoran. Tanpanya, siapa
+// pun bisa mengirim pesan ke percakapannya sendiri sambil mengutip id pesan
+// dari percakapan yang tidak dia ikuti — dan isi pesan itu akan tampil rapi di
+// dalam gelembung kutipan. Bentuknya persis seperti fitur; akibatnya adalah
+// membaca percakapan orang lain satu pesan pada satu waktu.
+//
+// `conversation_id = $2` di WHERE membuat jawabannya sama untuk pesan yang
+// tidak ada dan pesan yang tidak boleh dilihat: tidak ditemukan.
+func replyPreview(ctx context.Context, tx pgx.Tx, replyToID *uuid.UUID, convID uuid.UUID) (*ReplyPreview, error) {
+	if replyToID == nil {
+		return nil, nil
+	}
+
+	var (
+		rp        ReplyPreview
+		atts      []Attachment
+		deletedAt *time.Time
+	)
+	err := tx.QueryRow(ctx, `
+		SELECT `+replyCols("")+`
+		FROM messages WHERE id = $1 AND conversation_id = $2`, *replyToID, convID,
+	).Scan(&rp.ID, &rp.Seq, &rp.SenderID, &rp.Body, &atts, &deletedAt)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("%w: pesan yang dibalas tidak ada di percakapan ini", ErrForbidden)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("baca pesan yang dibalas: %w", err)
+	}
+
+	rp.Deleted = deletedAt != nil
+	if !rp.Deleted && rp.Body == "" {
+		rp.Kind = attachmentKind(atts)
+	}
+	return &rp, nil
+}
+
+// markMentioned memajukan penanda "ada yang menyebut kamu" pada anggota yang
+// disebut, sekaligus MEMVALIDASI bahwa mereka memang anggota.
+//
+// Validasi dan penulisan terjadi dalam satu UPDATE, bukan dua langkah: jumlah
+// baris yang tersentuh lebih sedikit dari yang diminta berarti ada id yang
+// bukan anggota percakapan ini — dan pesannya dibatalkan seluruhnya. Memisahkan
+// keduanya berarti ada celah di antara "sudah diperiksa" dan "sudah ditulis",
+// tepat pada pemeriksaan yang menentukan siapa boleh dibangunkan.
+func markMentioned(ctx context.Context, tx pgx.Tx, convID, senderID uuid.UUID, seq int64, mentions []uuid.UUID, all bool) error {
+	if len(mentions) > 0 {
+		tag, err := tx.Exec(ctx, `
+			UPDATE conversation_members SET mention_seq = GREATEST(mention_seq, $1)
+			WHERE conversation_id = $2 AND user_id = ANY($3)`, seq, convID, mentions)
+		if err != nil {
+			return fmt.Errorf("tandai sebutan: %w", err)
+		}
+		if tag.RowsAffected() != int64(len(mentions)) {
+			return fmt.Errorf("%w: menyebut orang yang bukan anggota percakapan ini", ErrForbidden)
+		}
+	}
+
+	if all {
+		if _, err := tx.Exec(ctx, `
+			UPDATE conversation_members SET mention_seq = GREATEST(mention_seq, $1)
+			WHERE conversation_id = $2 AND user_id <> $3`, seq, convID, senderID); err != nil {
+			return fmt.Errorf("tandai sebutan semua: %w", err)
+		}
+	}
+	return nil
+}
+
+// AckMentions mencatat bahwa sebutan sudah benar-benar sampai ke mata orangnya.
+//
+// Terpisah dari MarkRead dengan sengaja, dan itu seluruh alasan kolom ini ada.
+// MarkRead bergerak saat percakapannya dibuka; ini baru bergerak saat pesan
+// yang menyebut namanya benar-benar terlihat di layar. Membuka ruang sebentar
+// untuk mengintip tidak boleh menghapus panggilan yang belum dibaca.
+func (s *Store) AckMentions(ctx context.Context, convID, userID uuid.UUID, seq int64) (int64, error) {
+	var current int64
+	err := s.pool.QueryRow(ctx, `
+		UPDATE conversation_members SET mention_ack_seq = GREATEST(mention_ack_seq, $1)
+		WHERE conversation_id = $2 AND user_id = $3
+		RETURNING mention_ack_seq`, seq, convID, userID).Scan(&current)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrForbidden
+	}
+	if err != nil {
+		return 0, fmt.Errorf("ack sebutan: %w", err)
+	}
+	return current, nil
+}
+
 // ListMessages mengambil riwayat dengan cursor pagination.
 // beforeSeq = 0 berarti mulai dari pesan terbaru. Hasil dikembalikan menaik
 // (lama -> baru) supaya client bisa langsung menempelkannya ke atas daftar.
-func (s *Store) ListMessages(ctx context.Context, convID uuid.UUID, beforeSeq int64, limit int) ([]Message, error) {
-	var sb strings.Builder
-	sb.WriteString(`SELECT ` + messageCols + ` FROM messages WHERE conversation_id = $1`)
+// viewerID dipakai untuk mengisi kolom "Mine" pada ringkasan reaksi — satu-
+// satunya bagian dari sebuah pesan yang jawabannya berbeda per pembaca.
+func (s *Store) ListMessages(ctx context.Context, convID, viewerID uuid.UUID, beforeSeq int64, limit int) ([]Message, error) {
+	where := `m.conversation_id = $1`
 	args := []any{convID}
 	if beforeSeq > 0 {
-		sb.WriteString(` AND seq < $2`)
+		where += ` AND m.seq < $2`
 		args = append(args, beforeSeq)
 	}
-	sb.WriteString(fmt.Sprintf(` ORDER BY seq DESC LIMIT $%d`, len(args)+1))
+	query := messageSelect(where) + fmt.Sprintf(` ORDER BY m.seq DESC LIMIT $%d`, len(args)+1)
 	args = append(args, limit)
 
-	rows, err := s.pool.Query(ctx, sb.String(), args...)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list messages: %w", err)
 	}
@@ -514,15 +776,18 @@ func (s *Store) ListMessages(ctx context.Context, convID uuid.UUID, beforeSeq in
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 	}
+
+	if err := s.attachReactions(ctx, out, viewerID); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
 // MessagesSince dipakai saat client reconnect: kirim semua yang terlewat.
-func (s *Store) MessagesSince(ctx context.Context, convID uuid.UUID, afterSeq int64, limit int) ([]Message, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT `+messageCols+`
-		FROM messages WHERE conversation_id = $1 AND seq > $2
-		ORDER BY seq ASC LIMIT $3`, convID, afterSeq, limit)
+func (s *Store) MessagesSince(ctx context.Context, convID, viewerID uuid.UUID, afterSeq int64, limit int) ([]Message, error) {
+	rows, err := s.pool.Query(ctx,
+		messageSelect(`m.conversation_id = $1 AND m.seq > $2`)+` ORDER BY m.seq ASC LIMIT $3`,
+		convID, afterSeq, limit)
 	if err != nil {
 		return nil, fmt.Errorf("messages since: %w", err)
 	}
@@ -536,15 +801,34 @@ func (s *Store) MessagesSince(ctx context.Context, convID uuid.UUID, afterSeq in
 		}
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if err := s.attachReactions(ctx, out, viewerID); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
+// EditMessage mengubah isi pesan dan mengembalikannya lengkap dengan kutipannya.
+//
+// UPDATE-nya dibungkus CTE supaya self-join kutipan tetap bisa dipasang: klausa
+// RETURNING tidak bisa menjangkau tabel lain, termasuk tabel yang sama lewat
+// alias lain. Tanpa ini, pesan hasil edit akan kembali ke client TANPA kutipan
+// yang tadinya ada — dan gelembung kutipannya lenyap begitu pengirimnya
+// memperbaiki satu salah ketik.
 func (s *Store) EditMessage(ctx context.Context, id, senderID uuid.UUID, body string) (Message, error) {
 	var m Message
 	err := scanMessage(s.pool.QueryRow(ctx, `
-		UPDATE messages SET body = $1, edited_at = now()
-		WHERE id = $2 AND sender_id = $3 AND deleted_at IS NULL
-		RETURNING `+messageCols, body, id, senderID), &m)
+		WITH upd AS (
+			UPDATE messages SET body = $1, edited_at = now()
+			WHERE id = $2 AND sender_id = $3 AND deleted_at IS NULL
+			RETURNING *
+		)
+		SELECT `+messageCols("m")+`, `+replyCols("rep")+`
+		FROM upd m LEFT JOIN messages rep ON rep.id = m.reply_to_id`,
+		body, id, senderID), &m)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Message{}, ErrForbidden
@@ -572,9 +856,13 @@ func (s *Store) DeleteMessage(ctx context.Context, id, senderID uuid.UUID) (Mess
 
 	var m Message
 	err = scanMessage(tx.QueryRow(ctx, `
-		UPDATE messages SET body = '', attachments = '[]'::jsonb, deleted_at = now()
-		WHERE id = $1 AND sender_id = $2 AND deleted_at IS NULL
-		RETURNING `+messageCols, id, senderID), &m)
+		WITH upd AS (
+			UPDATE messages SET body = '', attachments = '[]'::jsonb, deleted_at = now()
+			WHERE id = $1 AND sender_id = $2 AND deleted_at IS NULL
+			RETURNING *
+		)
+		SELECT `+messageCols("m")+`, `+replyCols("rep")+`
+		FROM upd m LEFT JOIN messages rep ON rep.id = m.reply_to_id`, id, senderID), &m)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Message{}, ErrForbidden
@@ -587,6 +875,15 @@ func (s *Store) DeleteMessage(ctx context.Context, id, senderID uuid.UUID) (Mess
 		`UPDATE attachments SET message_id = NULL WHERE message_id = $1`, id); err != nil {
 		return Message{}, fmt.Errorf("lepas lampiran pesan: %w", err)
 	}
+
+	// Reaksi ikut pergi, dengan alasan yang sama dengan lampiran: emoji yang
+	// menempel pada "pesan ini dihapus" tidak menunjuk apa pun lagi. Jamnya
+	// dimajukan supaya yang sedang offline ikut kehilangan hitungannya, bukan
+	// menyimpan angka yang sudah tidak punya pesan.
+	if err := clearReactions(ctx, tx, m.ConversationID, id); err != nil {
+		return Message{}, err
+	}
+	m.Reactions = []ReactionSummary{}
 
 	if err := tx.Commit(ctx); err != nil {
 		return Message{}, err
