@@ -77,13 +77,16 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Title = strings.TrimSpace(req.Title)
-	if req.Title == "" {
-		writeError(w, http.StatusBadRequest, "judul grup wajib diisi")
+	// Aturan judul dipakai bersama dengan jalur ganti judul. Dua tempat yang
+	// memeriksa hal yang sama dengan caranya masing-masing adalah dua tempat
+	// yang suatu hari akan berbeda pendapat.
+	title, err := store.NormalizeGroupTitle(req.Title)
+	if err != nil {
+		s.writeStoreError(w, err, "judul grup")
 		return
 	}
 
-	convID, err := s.store.CreateGroup(r.Context(), me.ID, req.Title, req.MemberIDs)
+	convID, err := s.store.CreateGroup(r.Context(), me.ID, title, req.MemberIDs)
 	if err != nil {
 		s.writeStoreError(w, err, "create group")
 		return
@@ -434,7 +437,23 @@ func (s *Server) notifyConversationCreated(r *http.Request, convID uuid.UUID) {
 	if err != nil {
 		return
 	}
-	for _, id := range members {
+	s.notifyConversationCreatedTo(r, convID, members)
+}
+
+// notifyConversationCreatedTo mengirim kabar percakapan baru hanya kepada orang
+// yang disebut.
+//
+// Bentuk percakapan berbeda untuk tiap orang — jumlah belum dibaca, penanda
+// sebutan, dan lawan bicara pada DM — jadi tidak ada satu payload yang bisa
+// dipakai bersama, dan tiap penerima memang butuh query sendiri.
+//
+// Itulah sebabnya daftar penerimanya harus bisa dipersempit: saat seseorang
+// ditambahkan ke grup berisi dua ratus orang, yang perlu diberi tahu "ada
+// percakapan baru" cuma dia. Seratus sembilan puluh sembilan sisanya sudah
+// punya percakapan itu, dan mengirimi mereka semua berarti dua ratus query
+// untuk satu orang yang bergabung.
+func (s *Server) notifyConversationCreatedTo(r *http.Request, convID uuid.UUID, targets []uuid.UUID) {
+	for _, id := range targets {
 		convs, err := s.store.ListConversations(r.Context(), id)
 		if err != nil {
 			continue

@@ -26,10 +26,26 @@ const (
 	EventMessageNew      = "message.new"
 	EventMessageUpdated  = "message.updated"
 	EventConversationNew = "conversation.new"
-	EventReadUpdated     = "read.updated"
-	EventTyping          = "typing"
-	EventPresence        = "presence"
-	EventSyncComplete    = "sync.complete"
+
+	// EventConversationUpdated membawa keadaan grup setelah dikelola: judulnya
+	// dan daftar anggotanya.
+	//
+	// Terpisah dari catatan sistem yang menyertainya, dan keduanya memang
+	// dikirim berpasangan. Catatan itu adalah KEJADIAN — dia masuk ke riwayat,
+	// punya seq, dan tetap terbaca besok. Ini adalah KEADAAN sekarang, dan dia
+	// tidak punya tempat di riwayat: daftar anggota hari ini bukan sesuatu yang
+	// layak diulang di setiap halaman percakapan.
+	EventConversationUpdated = "conversation.updated"
+
+	// EventConversationRemoved dikirim HANYA kepada orang yang baru saja
+	// berhenti jadi anggota. Tanpa ini, percakapan yang sudah bukan miliknya
+	// tetap menggantung di sidebar sampai halamannya dimuat ulang — dan
+	// mengkliknya menghasilkan 404 yang tidak bisa dijelaskan.
+	EventConversationRemoved = "conversation.removed"
+	EventReadUpdated         = "read.updated"
+	EventTyping              = "typing"
+	EventPresence            = "presence"
+	EventSyncComplete        = "sync.complete"
 	// EventSyncBatch membawa banyak pesan susulan dalam satu frame. Lihat
 	// alasannya di ws.Handler.handleSync.
 	EventSyncBatch        = "sync.batch"

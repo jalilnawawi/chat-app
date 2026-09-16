@@ -13,6 +13,7 @@ import { useStore } from '../store';
 import { conversationTitle } from './Sidebar';
 import MessageBubble from './MessageBubble';
 import UploadStrip from './UploadStrip';
+import GroupPanel from './GroupPanel';
 import type { Message } from '../types';
 
 /** Indikator "sedang mengetik" dianggap basi setelah jeda ini. */
@@ -49,6 +50,7 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
   const [mentionQuery, setMentionQuery] = useState<{ at: number; text: string } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const [jumped, setJumped] = useState<string | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -90,6 +92,10 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
   useLayoutEffect(() => {
     lastCount.current = 0;
     setMentionQuery(null);
+    // Panel ditutup saat berpindah ruang: dia menampilkan anggota percakapan
+    // TERTENTU, dan panel yang tetap terbuka sesaat menampilkan orang-orang
+    // dari percakapan yang barusan ditinggalkan.
+    setPanelOpen(false);
     bottomRef.current?.scrollIntoView({ block: 'end' });
   }, [activeId]);
 
@@ -339,6 +345,7 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
     m.senderId !== me.id && !m.deletedAt && (m.mentionsAll || m.mentions.includes(me.id));
 
   return (
+    <div className="flex min-w-0 flex-1">
     <section
       className="relative flex min-w-0 flex-1 flex-col"
       // dragenter/dragover harus di-preventDefault, kalau tidak browser
@@ -363,7 +370,7 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
       )}
 
       <header className="flex items-center gap-3 border-b border-line bg-surface px-5 py-3">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h2 className="truncate text-sm font-semibold">{conversationTitle(conversation)}</h2>
           <p className="text-xs text-muted">
             {conversation.type === 'group'
@@ -373,6 +380,23 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
                 : 'Offline'}
           </p>
         </div>
+
+        {/* Hanya grup yang punya pengelolaan. DM tidak bisa ditambahi orang —
+            lihat catatan kebocoran di server/internal/store/group.go — jadi
+            tombolnya memang tidak ada di sana, bukan ada tapi menolak. */}
+        {conversation.type === 'group' && (
+          <button
+            onClick={() => setPanelOpen(v => !v)}
+            aria-label="Kelola grup"
+            title="Kelola grup"
+            aria-pressed={panelOpen}
+            className={`grid size-9 shrink-0 place-items-center rounded-xl border text-muted transition hover:border-accent hover:text-ink ${
+              panelOpen ? 'border-accent bg-accent-soft text-ink' : 'border-line'
+            }`}
+          >
+            ⚙
+          </button>
+        )}
       </header>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4">
@@ -541,5 +565,10 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
         </div>
       </div>
     </section>
+
+      {panelOpen && conversation.type === 'group' && (
+        <GroupPanel conversation={conversation} onClose={() => setPanelOpen(false)} />
+      )}
+    </div>
   );
 }
