@@ -281,6 +281,10 @@ type Attachment struct {
 	Width  *int `json:"width,omitempty"`
 	Height *int `json:"height,omitempty"`
 
+	// DurationMS hanya ada pada rekaman yang dibuat di dalam aplikasi — lihat
+	// 0009_pesan_suara.sql. Angka dari perekamnya, dipakai untuk tampilan saja.
+	DurationMS *int `json:"durationMs,omitempty"`
+
 	// ThumbURL kosong berarti lampiran ini tidak punya turunan kecil, dan
 	// client memakai URL aslinya. Tiga hal berakhir di keadaan itu: bukan
 	// gambar, sudah cukup kecil untuk dipakai apa adanya, dan pembuatan

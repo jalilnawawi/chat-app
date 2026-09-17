@@ -283,7 +283,7 @@ export const api = {
    */
   uploadAttachment: (
     file: File,
-    dimensions: { width: number; height: number } | null,
+    meta: { width?: number; height?: number; durationMs?: number },
     onProgress: (fraction: number) => void,
     signal?: AbortSignal,
   ): Promise<Attachment> =>
@@ -295,7 +295,13 @@ export const api = {
       // sebagai aliran dan meneruskannya ke penyimpanan tanpa menyangganya,
       // jadi field yang datang SETELAH berkas tidak akan pernah terbaca tepat
       // waktu. Query string sudah lengkap sebelum byte pertama dikirim.
-      const query = dimensions ? `?w=${dimensions.width}&h=${dimensions.height}` : '';
+      const params = new URLSearchParams();
+      if (meta.width && meta.height) {
+        params.set('w', String(meta.width));
+        params.set('h', String(meta.height));
+      }
+      if (meta.durationMs) params.set('d', String(Math.round(meta.durationMs)));
+      const query = params.toString() ? `?${params}` : '';
 
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `${BASE}/api/attachments${query}`);

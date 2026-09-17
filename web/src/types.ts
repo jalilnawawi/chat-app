@@ -88,6 +88,12 @@ export type Attachment = {
   width?: number;
   height?: number;
   /**
+   * Panjang rekaman, hanya pada pesan suara yang direkam di dalam aplikasi.
+   * Rekaman MediaRecorder tidak menyebut durasinya sendiri — lihat
+   * 0009_pesan_suara.sql — jadi angka inilah yang ditampilkan sebelum diputar.
+   */
+  durationMs?: number;
+  /**
    * Alamat turunan kecil, kosong bila tidak ada.
    *
    * Tiga hal berakhir tanpa turunan: bukan gambar, sudah cukup kecil untuk
@@ -318,6 +324,8 @@ export type Upload = {
   name: string;
   size: number;
   mime: string;
+  /** Ada hanya pada rekaman suara dari dalam aplikasi. */
+  durationMs?: number;
   /** objectURL untuk pratinjau gambar; wajib dilepas saat unggahan dibuang. */
   previewUrl: string | null;
   /** 0..1 */

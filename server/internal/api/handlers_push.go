@@ -197,6 +197,8 @@ func attachmentSummary(atts []store.Attachment) string {
 		return "Mengirim pesan"
 	case len(atts) == 1 && strings.HasPrefix(atts[0].MIME, "image/"):
 		return "📷 Mengirim gambar"
+	case len(atts) == 1 && atts[0].DurationMS != nil:
+		return "🎤 Mengirim pesan suara"
 	case len(atts) == 1:
 		return "📎 " + atts[0].Name
 	default:

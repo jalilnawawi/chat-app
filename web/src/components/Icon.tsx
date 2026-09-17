@@ -31,7 +31,13 @@ export type IconName =
   | 'perangkat'
   | 'teruskan'
   | 'sematan'
-  | 'bawah';
+  | 'bawah'
+  | 'mikrofon'
+  | 'emoji'
+  | 'hapus'
+  | 'putar'
+  | 'jeda'
+  | 'tambah';
 
 /** Jalur `d` tiap ikon. Semuanya digambar di kotak 24×24 yang sama. */
 const JALUR: Record<IconName, string> = {
@@ -61,6 +67,14 @@ const JALUR: Record<IconName, string> = {
   teruskan: 'M15 14l5-5-5-5M20 9h-9a7 7 0 0 0-7 7v4',
   sematan: 'M9 3.5h6M10 3.5l-.6 6.2L6.5 13v2h11v-2l-2.9-3.3L14 3.5M12 15v5.5',
   bawah: 'M12 5v14m-6-6 6 6 6-6',
+  mikrofon: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM19 11a7 7 0 0 1-14 0M12 18v3M8.5 21h7',
+  // `reaksi` tanpa tanda tambah: yang ini menyisipkan, bukan memberi.
+  emoji:
+    'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM8.5 14.5s1.3 1.7 3.5 1.7 3.5-1.7 3.5-1.7M9 9.5h.01M15 9.5h.01',
+  hapus: 'M4 7h16M10 11v6M14 11v6M5.5 7l1 12a2 2 0 0 0 2 1.8h7a2 2 0 0 0 2-1.8l1-12M9 7V4.5h6V7',
+  putar: 'M7 4.5v15l12.5-7.5z',
+  jeda: 'M8 5v14M16 5v14',
+  tambah: 'M12 5v14M5 12h14',
 };
 
 export default function Icon({

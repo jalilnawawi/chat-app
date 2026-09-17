@@ -102,9 +102,9 @@ func copyAttachments(ctx context.Context, tx pgx.Tx, src *forwarded, messageID, 
 	// berwenang tetap tabelnya.
 	rows, err := tx.Query(ctx, `
 		INSERT INTO attachments
-			(id, owner_id, message_id, storage_key, name, mime, size, width, height,
+			(id, owner_id, message_id, storage_key, name, mime, size, width, height, duration_ms,
 			 thumb_key, thumb_mime, thumb_size)
-		SELECT pair.new_id, $4, $5, a.storage_key, a.name, a.mime, a.size, a.width, a.height,
+		SELECT pair.new_id, $4, $5, a.storage_key, a.name, a.mime, a.size, a.width, a.height, a.duration_ms,
 		       a.thumb_key, a.thumb_mime, a.thumb_size
 		FROM unnest($1::uuid[], $2::uuid[]) AS pair(src_id, new_id)
 		JOIN attachments a ON a.id = pair.src_id AND a.message_id = $3

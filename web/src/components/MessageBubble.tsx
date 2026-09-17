@@ -3,7 +3,7 @@ import { useStore } from '../store';
 import AttachmentList from './AttachmentList';
 import Avatar from './Avatar';
 import Icon from './Icon';
-import ReactionRow from './ReactionRow';
+import ReactionRow, { ReactionButton } from './ReactionRow';
 import type { Message, PendingMessage, ReplyPreview, SystemEvent } from '../types';
 
 type Props = {
@@ -179,75 +179,90 @@ export default function MessageBubble({
         </span>
       )}
 
-      <div className={`flex max-w-[min(80%,34rem)] flex-col ${mine ? 'items-end' : 'items-start'}`}>
+      <div
+        className={`relative flex max-w-[min(80%,34rem)] min-w-0 flex-col ${mine ? 'items-end' : 'items-start'}`}
+      >
         {showAuthor && !mine && (
           <p className="mb-1 px-1 text-[13px] font-bold text-accent-text">{authorName}</p>
         )}
 
-        <div
-          className={`text-[15px] leading-[1.45] ${sudut} ${
-            // Gelembung yang isinya cuma gambar dibuat rapat: padding tebal di
-            // sekeliling foto membuatnya tampak seperti bingkai, bukan seperti
-            // foto yang dikirim.
-            attachments.length > 0 && body === '' && !deleted && !replyTo ? 'p-1.5' : 'px-3.5 py-2.5'
-          } ${
-            deleted
-              ? 'border border-dashed border-line-strong text-muted italic'
-              : mine
-                ? 'bg-accent text-accent-ink'
-                : 'border border-line bg-surface'
-          } ${
-            // Pesan yang memanggil kita diberi PINGGIRAN mangga, bukan bidang
-            // mangga. Latar sudah dipakai untuk membedakan pesan sendiri dari
-            // pesan orang, dan dua arti pada satu isyarat tidak bisa dibaca
-            // sekaligus. Pinggiran adalah isyarat ketiga yang masih kosong.
-            callsMe && !deleted ? 'ring-2 ring-call' : ''
-          } ${pending?.status === 'failed' ? 'opacity-70 ring-1 ring-danger' : ''}`}
-        >
-          {/* Penanda terusan berdiri di atas isinya, dan hanya itu: siapa
-              penulis aslinya tidak ikut dibawa. Kalimat yang diteruskan
-              tanpa penanda ini terbaca sebagai kalimat pengirimnya sendiri. */}
-          {message?.forwarded && !deleted && (
-            <p
-              className={`mb-1 flex items-center gap-1 text-[12px] font-semibold italic ${
-                mine ? 'text-accent-ink/80' : 'text-muted'
-              }`}
-            >
-              <Icon name="teruskan" size={13} />
-              Diteruskan
-            </p>
-          )}
+        {/* Gelembung dan tombol reaksinya sebaris: tombolnya di sisi yang
+            menghadap ke tengah layar — kiri untuk pesan sendiri, kanan untuk
+            pesan orang. */}
+        <div className={`flex max-w-full items-center gap-1 ${mine ? 'flex-row-reverse' : ''}`}>
+          <div
+            className={`min-w-0 text-[15px] leading-[1.45] ${sudut} ${
+              // Gelembung yang isinya cuma gambar dibuat rapat: padding tebal di
+              // sekeliling foto membuatnya tampak seperti bingkai, bukan seperti
+              // foto yang dikirim.
+              attachments.length > 0 && body === '' && !deleted && !replyTo ? 'p-1.5' : 'px-3.5 py-2.5'
+            } ${
+              deleted
+                ? 'border border-dashed border-line-strong text-muted italic'
+                : mine
+                  ? 'bg-accent text-accent-ink'
+                  : 'border border-line bg-surface'
+            } ${
+              // Pesan yang memanggil kita diberi PINGGIRAN mangga, bukan bidang
+              // mangga. Latar sudah dipakai untuk membedakan pesan sendiri dari
+              // pesan orang, dan dua arti pada satu isyarat tidak bisa dibaca
+              // sekaligus. Pinggiran adalah isyarat ketiga yang masih kosong.
+              callsMe && !deleted ? 'ring-2 ring-call' : ''
+            } ${pending?.status === 'failed' ? 'opacity-70 ring-1 ring-danger' : ''}`}
+          >
+            {/* Penanda terusan berdiri di atas isinya, dan hanya itu: siapa
+                penulis aslinya tidak ikut dibawa. Kalimat yang diteruskan
+                tanpa penanda ini terbaca sebagai kalimat pengirimnya sendiri. */}
+            {message?.forwarded && !deleted && (
+              <p
+                className={`mb-1 flex items-center gap-1 text-[12px] font-semibold italic ${
+                  mine ? 'text-accent-ink/80' : 'text-muted'
+                }`}
+              >
+                <Icon name="teruskan" size={13} />
+                Diteruskan
+              </p>
+            )}
 
-          {replyTo && !deleted && (
-            <Quote reply={replyTo} mine={mine} nameOf={nameOf} onJump={onJump} />
-          )}
+            {replyTo && !deleted && (
+              <Quote reply={replyTo} mine={mine} nameOf={nameOf} onJump={onJump} />
+            )}
 
-          {editing ? (
-            <textarea
-              autoFocus
-              value={draft}
-              onChange={e => setDraft(e.target.value)}
-              onBlur={() => void saveEdit()}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  void saveEdit();
-                }
-                if (e.key === 'Escape') setEditing(false);
-              }}
-              className="w-full resize-none bg-transparent text-inherit outline-none"
-            />
+            {editing ? (
+              <textarea
+                autoFocus
+                value={draft}
+                onChange={e => setDraft(e.target.value)}
+                onBlur={() => void saveEdit()}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    void saveEdit();
+                  }
+                  if (e.key === 'Escape') setEditing(false);
+                }}
+                className="w-full resize-none bg-transparent text-inherit outline-none"
+              />
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <AttachmentList attachments={attachments} mine={mine} />
+                {/* Pesan boleh hanya berisi lampiran — mengirim foto tanpa
+                    keterangan adalah hal yang paling biasa dilakukan orang. */}
+                {(body !== '' || deleted) && (
+                  <p className="break-words whitespace-pre-wrap">
+                    {deleted ? 'Pesan ini dihapus' : <Highlighted text={body} names={highlights} />}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {message && !deleted && !editing ? (
+            <ReactionButton message={message} mine={mine} />
           ) : (
-            <div className="flex flex-col gap-1.5">
-              <AttachmentList attachments={attachments} mine={mine} />
-              {/* Pesan boleh hanya berisi lampiran — mengirim foto tanpa
-                  keterangan adalah hal yang paling biasa dilakukan orang. */}
-              {(body !== '' || deleted) && (
-                <p className="break-words whitespace-pre-wrap">
-                  {deleted ? 'Pesan ini dihapus' : <Highlighted text={body} names={highlights} />}
-                </p>
-              )}
-            </div>
+            // Ruangnya tetap dipesan: pesan yang baru terkonfirmasi tidak boleh
+            // menyempit dan membungkus ulang kalimatnya di depan mata.
+            pending && <span aria-hidden className="w-8 shrink-0" />
           )}
         </div>
 

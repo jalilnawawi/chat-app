@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"path"
@@ -65,7 +66,76 @@ var playableTypes = map[string]bool{
 	"audio/mpeg":      true,
 	"audio/wave":      true,
 	"application/ogg": true,
+
+	// Rekaman suara dari MediaRecorder. Wadahnya sama persis dengan tiga
+	// baris di atas — lihat narrowContainer untuk bagaimana tipe ini bisa
+	// tercatat tanpa pernah dihasilkan oleh sniffing.
+	"audio/webm": true,
+	"audio/mp4":  true,
+	"audio/ogg":  true,
 }
+
+// audioOfContainer memetakan tipe WADAH hasil sniffing ke versi suaranya.
+//
+// http.DetectContentType membaca beberapa byte pertama, dan beberapa byte
+// pertama WebM, MP4, dan Ogg tidak mengatakan apa pun tentang isinya — hanya
+// tentang wadahnya. Rekaman suara dari Chrome karenanya tercatat sebagai
+// "video/webm", dan client yang jujur mengikuti tipe itu merender pemutar
+// video hitam untuk sebuah pesan suara.
+var audioOfContainer = map[string]string{
+	"video/webm":      "audio/webm",
+	"video/mp4":       "audio/mp4",
+	"application/ogg": "audio/ogg",
+}
+
+// narrowContainer menerima pernyataan pengunggah HANYA untuk satu hal: bahwa
+// wadah yang dikenali sniffing berisi suara, bukan gambar bergerak.
+//
+// Aturan "tipe dari isi, bukan dari pengakuan" tetap utuh, karena pengakuan
+// ini tidak bisa memindahkan berkas ke kelas lain. Wadahnya tetap yang
+// dikenali dari byte-nya; yang berubah cuma label di dalam kelas yang sama,
+// dan kedua labelnya sama-sama ada di playableTypes. Arah sebaliknya — suara
+// jadi video, atau apa pun jadi wadah lain — tidak pernah diterima.
+//
+// Kalau pengakuannya bohong, akibatnya sebuah video tampil dengan pemutar
+// suara: tidak ada byte yang dieksekusi, tidak ada header yang berubah selain
+// Content-Type yang tetap berupa tipe media tanpa kemampuan menjalankan apa pun.
+func narrowContainer(sniffed, claimed string, head []byte) string {
+	base, _, err := mime.ParseMediaType(claimed)
+	if err != nil {
+		return sniffed
+	}
+
+	// Pengenal MP4 milik net/http hanya menerima berkas yang salah satu
+	// brand-nya berawalan "mp4". Rekaman M4A — brand "M4A ", "isom" — lolos
+	// dari sana sebagai octet-stream, padahal wadahnya ISO-BMFF yang sama.
+	// Kotak ftyp di awal berkas cukup untuk mengenali wadahnya; yang tidak
+	// punya kotak itu tetap octet-stream.
+	if sniffed == "application/octet-stream" && base == "audio/mp4" && isISOBMFF(head) {
+		return "audio/mp4"
+	}
+
+	audio, ok := audioOfContainer[sniffed]
+	if !ok || base != audio {
+		return sniffed
+	}
+	return audio
+}
+
+// isISOBMFF memeriksa kotak pertama berkas: panjang empat byte, lalu "ftyp",
+// dan panjangnya masuk akal untuk sebuah kotak ftyp.
+func isISOBMFF(head []byte) bool {
+	if len(head) < 16 || string(head[4:8]) != "ftyp" {
+		return false
+	}
+	size := int(head[0])<<24 | int(head[1])<<16 | int(head[2])<<8 | int(head[3])
+	return size >= 16 && size <= 256 && size%4 == 0
+}
+
+// maxDurationMS sama dengan batas CHECK di 0009_pesan_suara.sql. Angka di luar
+// jangkauan dibuang di sini, bukan dibiarkan ditolak database — durasi yang
+// salah bukan alasan menggagalkan unggahan yang byte-nya sudah tersimpan.
+const maxDurationMS = 3_600_000
 
 // thumbWait adalah berapa lama unggahan mau menunggu giliran mendekode gambar.
 //
@@ -108,7 +178,7 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	head = head[:n]
-	contentType := http.DetectContentType(head)
+	contentType := narrowContainer(http.DetectContentType(head), part.Header.Get("Content-Type"), head)
 
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -167,6 +237,7 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 		Key: key,
 	}
 	sa.Width, sa.Height = dimensions(r.URL.Query())
+	sa.DurationMS = duration(r.URL.Query(), contentType)
 
 	// Ukuran yang diakui client hanya dipakai kalau server tidak punya
 	// salinannya untuk diperiksa sendiri — yaitu saat turunan dimatikan. Di
@@ -542,6 +613,11 @@ var commonExtensions = map[string]string{
 	"text/html":       ".html",
 	"application/pdf": ".pdf",
 	"application/zip": ".zip",
+	// mime.ExtensionsByType tidak mengenal ketiganya di banyak sistem, dan
+	// tanpa entri ini rekaman suara tersimpan tanpa ekstensi.
+	"audio/webm": ".weba",
+	"audio/mp4":  ".m4a",
+	"audio/ogg":  ".ogg",
 }
 
 // storageKey menyusun tempat penyimpanan dari id, BUKAN dari nama berkas
@@ -619,13 +695,30 @@ func dimensions(q url.Values) (*int, *int) {
 	return &w, &h
 }
 
+// duration membaca panjang rekaman dari query, dengan alasan yang sama dengan
+// dimensions: query sudah lengkap sebelum byte pertama berkasnya tiba.
+//
+// Hanya untuk suara. Durasi yang menempel pada gambar atau PDF tidak berarti
+// apa-apa, dan client yang menampilkannya akan menggambar pemutar untuk
+// sesuatu yang tidak bisa diputar.
+func duration(q url.Values, contentType string) *int {
+	if !strings.HasPrefix(contentType, "audio/") {
+		return nil
+	}
+	d, err := strconv.Atoi(q.Get("d"))
+	if err != nil || d <= 0 || d > maxDurationMS {
+		return nil
+	}
+	return &d
+}
+
 // firstFilePart mengambil bagian multipart pertama yang membawa berkas.
 //
 // Sengaja memakai MultipartReader, bukan ParseMultipartForm: yang kedua
 // menyalin seluruh unggahan ke memori dan disk sementara lebih dulu, lalu
 // menyerahkannya. Untuk berkas yang hanya perlu diteruskan ke penyimpanan,
 // singgah itu murni biaya.
-func firstFilePart(r *http.Request) (io.ReadCloser, string, error) {
+func firstFilePart(r *http.Request) (*multipart.Part, string, error) {
 	mr, err := r.MultipartReader()
 	if err != nil {
 		return nil, "", errors.New("unggahan harus berupa multipart/form-data")

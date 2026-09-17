@@ -19,6 +19,9 @@ import ForwardDialog from './ForwardDialog';
 import Icon from './Icon';
 import PinBar from './PinBar';
 import Tanda from './Tanda';
+import EmojiPicker from './EmojiPicker';
+import { formatDuration } from './VoicePlayer';
+import { canRecord, MAX_RECORDING_MS, useRecorder, type Recording } from '../useRecorder';
 import type { Message } from '../types';
 
 /** Indikator "sedang mengetik" dianggap basi setelah jeda ini. */
@@ -112,6 +115,11 @@ export default function ChatPanel({
   const [panelOpen, setPanelOpen] = useState(false);
   const [forwarding, setForwarding] = useState<Message | null>(null);
   const [pinError, setPinError] = useState<string | null>(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  // Kunci unggahan rekaman yang langsung dikirim begitu selesai terunggah.
+  const [sendWhenReady, setSendWhenReady] = useState<string | null>(null);
+  const emojiBox = useRef<HTMLDivElement>(null);
+  const emojiButton = useRef<HTMLButtonElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -127,6 +135,69 @@ export default function ChatPanel({
   const uploading = drafts.some(u => u.status === 'uploading');
   const attachable = drafts.some(u => u.status === 'ready');
   const replying = activeId ? (replyMap[activeId] ?? null) : null;
+
+  // Dihitung sekali: kemampuan merekam tidak berubah selama halaman terbuka.
+  const recordable = useMemo(() => attachments && canRecord(), [attachments]);
+
+  const onRecorded = useCallback(
+    ({ file, durationMs }: Recording) => {
+      if (!activeId) return;
+      // Rekaman masuk laci lampiran seperti berkas lain — unggahan, kemajuan,
+      // dan coba-lagi-nya sama — lalu dikirim sendiri begitu siap. Kalau
+      // unggahannya gagal, dia tetap di laci dengan tombol coba lagi, dan
+      // tidak ada yang hilang.
+      const [key] = addFiles(activeId, [file], durationMs);
+      if (key) setSendWhenReady(key);
+    },
+    [activeId, addFiles],
+  );
+  const recorder = useRecorder(onRecorded);
+  const recording = recorder.phase !== 'idle';
+  const stopRecording = useRef(recorder.stop);
+  stopRecording.current = recorder.stop;
+
+  useEffect(() => {
+    if (!sendWhenReady || !activeId) return;
+    const u = drafts.find(d => d.key === sendWhenReady);
+    if (!u || u.status === 'failed') {
+      setSendWhenReady(null);
+      return;
+    }
+    if (u.status !== 'ready') return;
+    setSendWhenReady(null);
+    // Teks yang sempat diketik selama rekamannya terunggah TIDAK ikut: dia
+    // tetap di kolom tulis, menunggu dikirim dengan sengaja.
+    void sendMessage(activeId, '');
+  }, [drafts, sendWhenReady, activeId, sendMessage]);
+
+  // Selama merekam, Escape membuang rekamannya — jalan keluar yang sama
+  // dengan membatalkan balasan atau suntingan.
+  useEffect(() => {
+    if (!recording) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') stopRecording.current(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [recording]);
+
+  useEffect(() => {
+    if (!emojiOpen) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (emojiBox.current?.contains(t) || emojiButton.current?.contains(t)) return;
+      setEmojiOpen(false);
+    };
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') setEmojiOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [emojiOpen]);
 
   // Indikator typing kedaluwarsa sendiri; render ulang berkala agar hilang
   // walaupun pengirimnya keburu putus sebelum mengirim "typing: false".
@@ -157,6 +228,11 @@ export default function ChatPanel({
     // TERTENTU, dan panel yang tetap terbuka sesaat menampilkan orang-orang
     // dari percakapan yang barusan ditinggalkan.
     setPanelOpen(false);
+    // Rekaman yang sedang berjalan dibuang: suara yang direkam untuk satu
+    // orang tidak boleh terkirim ke orang lain hanya karena layarnya berganti.
+    stopRecording.current(false);
+    setSendWhenReady(null);
+    setEmojiOpen(false);
     bottomRef.current?.scrollIntoView({ block: 'end' });
   }, [activeId]);
 
@@ -365,6 +441,28 @@ export default function ChatPanel({
     typingSentAt.current = 0;
     send('typing', { conversationId: activeId, typing: false });
     await sendMessage(activeId!, body);
+  }
+
+  /**
+   * Menyisipkan emoji di posisi kursor, bukan di ujung teks.
+   *
+   * Papan emoji dibiarkan terbuka: orang jarang memilih satu saja. Di layar
+   * sentuh kolom tulisnya TIDAK difokuskan kembali — fokus membuka papan
+   * ketik, dan papan ketik menutupi papan emoji yang baru saja dipakai.
+   */
+  function insertEmoji(emoji: string) {
+    const el = textarea.current;
+    const start = el?.selectionStart ?? draft.length;
+    const end = el?.selectionEnd ?? draft.length;
+    setDraft(draft.slice(0, start) + emoji + draft.slice(end));
+    notifyTyping();
+
+    const pos = start + emoji.length;
+    requestAnimationFrame(() => {
+      if (!el) return;
+      if (!window.matchMedia('(hover: none)').matches) el.focus();
+      el.setSelectionRange(pos, pos);
+    });
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -736,74 +834,142 @@ export default function ChatPanel({
           </div>
         )}
 
-        <div className="flex items-end gap-2">
-          {/* Tombolnya hanya ada kalau server ini memang menerima lampiran —
-              aturan yang sama dengan tombol notifikasi di sidebar dan tombol
-              kelola grup: yang tidak boleh ditekan tidak ditampilkan, bukan
-              ditampilkan lalu ditolak. */}
-          {attachments && (
-            <>
-              <input
-                ref={fileInput}
-                type="file"
-                multiple
-                hidden
-                onChange={e => {
-                  pick(e.target.files);
-                  // Dikosongkan supaya memilih berkas yang SAMA dua kali berturut-
-                  // turut tetap memicu change — nilainya tidak berubah, jadi
-                  // browser tidak akan memberi tahu.
-                  e.target.value = '';
-                }}
-              />
-              <button
-                onClick={() => fileInput.current?.click()}
-                aria-label="Lampirkan berkas"
-                title="Lampirkan berkas — bisa juga seret ke sini atau tempel gambar"
-                className="grid size-11 shrink-0 place-items-center rounded-xl text-muted transition hover:bg-canvas hover:text-ink"
-              >
-                <Icon name="klip" />
-              </button>
-            </>
-          )}
+        {emojiOpen && !recording && (
+          <div ref={emojiBox} className="absolute bottom-full left-3 z-20 mb-2">
+            <EmojiPicker onPick={insertEmoji} />
+          </div>
+        )}
 
-          <textarea
-            ref={textarea}
-            value={draft}
-            rows={1}
-            onChange={e => {
-              setDraft(e.target.value);
-              detectMention(e.target.value, e.target.selectionStart);
-              notifyTyping();
-            }}
-            onClick={e => detectMention(e.currentTarget.value, e.currentTarget.selectionStart)}
-            onBlur={() => setMentionQuery(null)}
-            onPaste={onPaste}
-            onKeyDown={onKeyDown}
-            // Satu kalimat pendek untuk semua ruang. Petunjuk "@ untuk
-            // menyebut" sebelumnya terpotong di tengah pada layar ponsel —
-            // petunjuk yang tidak selesai terbaca lebih buruk daripada tidak
-            // ada, dan daftar sebutannya toh muncul sendiri begitu @ diketik.
-            placeholder="Tulis pesan…"
-            className="max-h-36 min-h-11 flex-1 resize-none rounded-[22px] border border-line-strong bg-canvas px-4 py-2.5 text-[15px] leading-6 outline-none transition placeholder:text-muted focus:bg-surface"
-          />
-          <button
-            onClick={() => void submit()}
-            // Unggahan yang belum selesai menahan tombol kirim. Melepasnya
-            // lebih awal akan mengirim pesan TANPA lampiran yang jelas-jelas
-            // terlihat di layar — kegagalan yang diam dan membingungkan.
-            disabled={(!draft.trim() && !attachable) || uploading}
-            aria-label="Kirim pesan"
-            title={uploading ? 'Menunggu unggahan selesai' : 'Kirim (Enter)'}
-            className="flex h-11 shrink-0 items-center gap-2 rounded-full bg-accent px-4 font-semibold text-accent-ink transition hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:hover:brightness-100"
+        {recorder.error && (
+          <p
+            role="alert"
+            className="mb-2 flex items-center justify-between gap-2 rounded-xl bg-danger-soft px-3 py-2 text-[13px] text-danger"
           >
-            <Icon name="kirim" size={18} />
-            {/* Kata "Kirim" ikut tampil begitu ada tempatnya. Pesawat kertas
-                sudah dikenal luas, tapi tombol berlabel tetap lebih cepat
-                dipercaya oleh orang yang baru pertama membuka aplikasi ini. */}
-            <span className="hidden sm:inline">{uploading ? 'Mengunggah…' : 'Kirim'}</span>
-          </button>
-        </div>
+            {recorder.error}
+            <button
+              onClick={recorder.clearError}
+              aria-label="Tutup"
+              className="grid size-6 shrink-0 place-items-center rounded-md hover:bg-surface"
+            >
+              <Icon name="tutup" size={14} />
+            </button>
+          </p>
+        )}
+
+        {recording ? (
+          <RecordingBar
+            starting={recorder.phase === 'starting'}
+            elapsed={recorder.elapsed}
+            levels={recorder.levels}
+            onCancel={() => recorder.stop(false)}
+            onSend={() => recorder.stop(true)}
+          />
+        ) : (
+          <div className="flex items-end gap-2">
+            {/* Satu kotak berisi tiga hal: emoji di kiri, tulisan di tengah,
+                lampiran di kanan. Keduanya tombol yang mengubah APA yang
+                ditulis, jadi tempatnya di dalam kotak tulis — tombol di
+                luarnya hanya satu, yang mengirim. */}
+            <div className="flex min-w-0 flex-1 items-end rounded-[22px] border border-line-strong bg-canvas transition focus-within:border-accent focus-within:bg-surface">
+              <button
+                ref={emojiButton}
+                onClick={() => setEmojiOpen(v => !v)}
+                aria-label="Pilih emoji"
+                aria-expanded={emojiOpen}
+                title="Emoji"
+                className={`grid size-11 shrink-0 place-items-center rounded-full transition ${
+                  emojiOpen ? 'text-accent-text' : 'text-muted hover:text-ink'
+                }`}
+              >
+                <Icon name="emoji" size={22} />
+              </button>
+
+              <textarea
+                ref={textarea}
+                value={draft}
+                rows={1}
+                onChange={e => {
+                  setDraft(e.target.value);
+                  detectMention(e.target.value, e.target.selectionStart);
+                  notifyTyping();
+                }}
+                onClick={e => detectMention(e.currentTarget.value, e.currentTarget.selectionStart)}
+                onBlur={() => setMentionQuery(null)}
+                onPaste={onPaste}
+                onKeyDown={onKeyDown}
+                // Satu kalimat pendek untuk semua ruang. Petunjuk "@ untuk
+                // menyebut" sebelumnya terpotong di tengah pada layar ponsel —
+                // petunjuk yang tidak selesai terbaca lebih buruk daripada tidak
+                // ada, dan daftar sebutannya toh muncul sendiri begitu @ diketik.
+                placeholder="Tulis pesan…"
+                aria-label="Tulis pesan"
+                className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent py-2.5 text-[15px] leading-6 outline-none placeholder:text-muted focus-visible:outline-none"
+              />
+
+              {/* Tombolnya hanya ada kalau server ini memang menerima lampiran —
+                  aturan yang sama dengan tombol notifikasi di sidebar dan tombol
+                  kelola grup: yang tidak boleh ditekan tidak ditampilkan, bukan
+                  ditampilkan lalu ditolak. */}
+              {attachments && (
+                <>
+                  <input
+                    ref={fileInput}
+                    type="file"
+                    multiple
+                    hidden
+                    onChange={e => {
+                      pick(e.target.files);
+                      // Dikosongkan supaya memilih berkas yang SAMA dua kali berturut-
+                      // turut tetap memicu change — nilainya tidak berubah, jadi
+                      // browser tidak akan memberi tahu.
+                      e.target.value = '';
+                    }}
+                  />
+                  <button
+                    onClick={() => fileInput.current?.click()}
+                    aria-label="Lampirkan berkas"
+                    title="Lampirkan berkas — bisa juga seret ke sini atau tempel gambar"
+                    className="grid size-11 shrink-0 place-items-center rounded-full text-muted transition hover:text-ink"
+                  >
+                    <Icon name="klip" />
+                  </button>
+                </>
+              )}
+            </div>
+
+            {/* Kotak kosong: tombolnya merekam. Ada yang bisa dikirim: tombolnya
+                mengirim. Satu tempat, satu tombol — dua tombol bulat
+                bersebelahan dengan warna yang sama akan tertukar oleh ibu jari. */}
+            {recordable && !draft.trim() && !attachable && !uploading ? (
+              <button
+                onClick={() => void recorder.start()}
+                aria-label="Rekam pesan suara"
+                title={`Rekam pesan suara — paling lama ${formatDuration(MAX_RECORDING_MS)}`}
+                className="flex h-11 shrink-0 items-center gap-2 rounded-full bg-accent px-3 font-semibold text-accent-ink transition hover:brightness-110 active:scale-95 sm:px-4"
+              >
+                <Icon name="mikrofon" />
+                <span className="hidden sm:inline">Rekam</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => void submit()}
+                // Unggahan yang belum selesai menahan tombol kirim. Melepasnya
+                // lebih awal akan mengirim pesan TANPA lampiran yang jelas-jelas
+                // terlihat di layar — kegagalan yang diam dan membingungkan.
+                disabled={(!draft.trim() && !attachable) || uploading}
+                aria-label="Kirim pesan"
+                title={uploading ? 'Menunggu unggahan selesai' : 'Kirim (Enter)'}
+                className="flex h-11 shrink-0 items-center gap-2 rounded-full bg-accent px-3 font-semibold text-accent-ink transition hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:hover:brightness-100 sm:px-4"
+              >
+                <Icon name="kirim" size={20} />
+                {/* Kata "Kirim" ikut tampil begitu ada tempatnya. Pesawat kertas
+                    sudah dikenal luas, tapi tombol berlabel tetap lebih cepat
+                    dipercaya oleh orang yang baru pertama membuka aplikasi ini. */}
+                <span className="hidden sm:inline">{uploading ? 'Mengunggah…' : 'Kirim'}</span>
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </section>
 
@@ -814,6 +980,87 @@ export default function ChatPanel({
       {panelOpen && conversation.type === 'group' && (
         <GroupPanel conversation={conversation} onClose={() => setPanelOpen(false)} />
       )}
+    </div>
+  );
+}
+
+/**
+ * Bilah yang menggantikan kolom tulis selama merekam.
+ *
+ * Tiga hal saja: buang, seberapa lama, kirim. Batang-batang di tengah adalah
+ * tingkat suara yang benar-benar tertangkap, bukan hiasan — mikrofon yang
+ * dibisukan dari perangkatnya terlihat sebagai garis datar, sebelum lima menit
+ * sunyi terlanjur terkirim.
+ */
+function RecordingBar({
+  starting,
+  elapsed,
+  levels,
+  onCancel,
+  onSend,
+}: {
+  starting: boolean;
+  elapsed: number;
+  levels: number[];
+  onCancel: () => void;
+  onSend: () => void;
+}) {
+  const BARS = 32;
+  const padded = [...Array<number>(Math.max(0, BARS - levels.length)).fill(0), ...levels];
+  const sisa = MAX_RECORDING_MS - elapsed;
+
+  return (
+    <div role="group" aria-label="Merekam pesan suara" className="flex items-center gap-2">
+      <button
+        onClick={onCancel}
+        aria-label="Buang rekaman"
+        title="Buang rekaman (Esc)"
+        className="grid size-11 shrink-0 place-items-center rounded-full text-danger transition hover:bg-danger-soft"
+      >
+        <Icon name="hapus" />
+      </button>
+
+      <div className="flex h-11 min-w-0 flex-1 items-center gap-3 rounded-[22px] border border-line-strong bg-canvas px-4">
+        {starting ? (
+          <span className="truncate text-[14px] text-muted">Menunggu izin mikrofon…</span>
+        ) : (
+          <>
+            <span className="rekam size-2.5 shrink-0 rounded-full bg-danger" aria-hidden />
+            <span className="shrink-0 text-[15px] font-semibold tabular-nums" aria-live="off">
+              {formatDuration(elapsed)}
+            </span>
+            <span
+              aria-hidden
+              className="flex h-6 min-w-0 flex-1 items-center justify-end gap-[3px] overflow-hidden"
+            >
+              {padded.map((level, i) => (
+                <span
+                  key={i}
+                  className="w-[3px] shrink-0 rounded-full bg-accent"
+                  style={{ height: `${Math.max(3, Math.round(level * 24))}px` }}
+                />
+              ))}
+            </span>
+            {/* Peringatan menjelang batas, bukan hitungan mundur sepanjang
+                waktu: yang perlu tahu hanya yang hampir sampai. */}
+            {sisa <= 30_000 && (
+              <span className="shrink-0 text-[12px] font-semibold text-danger tabular-nums">
+                sisa {formatDuration(sisa)}
+              </span>
+            )}
+          </>
+        )}
+      </div>
+
+      <button
+        onClick={onSend}
+        disabled={starting}
+        aria-label="Kirim pesan suara"
+        className="flex h-11 shrink-0 items-center gap-2 rounded-full bg-accent px-3 font-semibold text-accent-ink transition hover:brightness-110 active:scale-95 disabled:opacity-40 sm:px-4"
+      >
+        <Icon name="kirim" size={20} />
+        <span className="hidden sm:inline">Kirim</span>
+      </button>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { useStore } from '../store';
 import { formatBytes } from './AttachmentList';
 import Icon from './Icon';
+import { formatDuration } from './VoicePlayer';
 import type { Upload } from '../types';
 
 /**
@@ -47,12 +48,18 @@ export default function UploadStrip({ conversationId }: { conversationId: string
             />
           ) : (
             <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-line text-muted">
-              <Icon name="klip" size={18} />
+              <Icon name={u.durationMs !== undefined ? 'mikrofon' : 'klip'} size={18} />
             </span>
           )}
 
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] font-semibold">{u.name}</p>
+            <p className="truncate text-[13px] font-semibold">
+              {/* Nama berkas rekaman dibuat mesin dan tidak berarti apa pun
+                  bagi orang yang baru saja bicara. */}
+              {u.durationMs !== undefined
+                ? `Pesan suara · ${formatDuration(u.durationMs)}`
+                : u.name}
+            </p>
             <UploadStatus upload={u} onRetry={() => retryUpload(conversationId, u.key)} />
           </div>
 

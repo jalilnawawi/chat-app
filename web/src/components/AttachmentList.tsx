@@ -1,5 +1,6 @@
 import { attachmentURL } from '../api';
 import Icon from './Icon';
+import VoicePlayer from './VoicePlayer';
 import type { Attachment } from '../types';
 
 /** Ukuran berkas dalam satuan yang biasa dipakai orang, bukan byte mentah. */
@@ -26,6 +27,10 @@ const PLAYABLE = new Set([
   'audio/mpeg',
   'audio/wave',
   'application/ogg',
+  // Rekaman suara dari MediaRecorder — lihat narrowContainer di server.
+  'audio/webm',
+  'audio/mp4',
+  'audio/ogg',
 ]);
 
 const isVideo = (a: Attachment) => a.mime.startsWith('video/') && PLAYABLE.has(a.mime);
@@ -109,13 +114,7 @@ export default function AttachmentList({
             className="max-h-80 w-full rounded-xl bg-black"
           />
         ) : (
-          <audio
-            key={a.id}
-            src={attachmentURL(a.url)}
-            controls
-            preload="metadata"
-            className="w-full min-w-56"
-          />
+          <VoicePlayer key={a.id} attachment={a} mine={mine} />
         ),
       )}
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"mime"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path"
@@ -309,6 +310,100 @@ func TestThumbFileNameMengikutiIsiTurunannya(t *testing.T) {
 	for _, c := range cases {
 		if got := thumbFileName(c.nama, c.mime); got != c.mau {
 			t.Errorf("thumbFileName(%q, %q) = %q, mau %q", c.nama, c.mime, got, c.mau)
+		}
+	}
+}
+
+// Pengakuan pengunggah hanya boleh MEMPERSEMPIT wadah yang sama ke versi
+// suaranya. Setiap baris lain di tabel ini adalah cara memakai pengakuan itu
+// untuk berpindah kelas, dan semuanya harus ditolak.
+func TestNarrowContainerHanyaKeSuaraDalamWadahYangSama(t *testing.T) {
+	cases := []struct {
+		sniffed, claimed, want string
+	}{
+		{"video/webm", "audio/webm", "audio/webm"},
+		{"video/webm", "audio/webm;codecs=opus", "audio/webm"},
+		{"video/mp4", "audio/mp4", "audio/mp4"},
+		{"application/ogg", "audio/ogg; codecs=opus", "audio/ogg"},
+
+		// Wadah lain: tetap hasil sniffing.
+		{"video/webm", "audio/mp4", "video/webm"},
+		{"video/mp4", "audio/webm", "video/mp4"},
+		// Arah sebaliknya tidak ada.
+		{"audio/mpeg", "video/mp4", "audio/mpeg"},
+		// Pengakuan tidak pernah bisa mengangkat berkas ke kelas yang dirender.
+		{"text/html; charset=utf-8", "audio/webm", "text/html; charset=utf-8"},
+		{"application/octet-stream", "audio/webm", "application/octet-stream"},
+		{"text/plain; charset=utf-8", "image/png", "text/plain; charset=utf-8"},
+		// Pengakuan kosong atau rusak.
+		{"video/webm", "", "video/webm"},
+		{"video/webm", ";;;", "video/webm"},
+		{"video/webm", "video/webm", "video/webm"},
+	}
+	for _, c := range cases {
+		if got := narrowContainer(c.sniffed, c.claimed, nil); got != c.want {
+			t.Errorf("narrowContainer(%q, %q) = %q, mau %q", c.sniffed, c.claimed, got, c.want)
+		}
+		// Apa pun hasilnya, kelas penyajiannya tidak boleh naik.
+		got := narrowContainer(c.sniffed, c.claimed, nil)
+		if (playableTypes[got] || inlineTypes[got]) && !(playableTypes[c.sniffed] || inlineTypes[c.sniffed]) {
+			t.Errorf("narrowContainer(%q, %q) mengangkat berkas jadi inline: %q", c.sniffed, c.claimed, got)
+		}
+	}
+}
+
+// M4A tidak dikenali pengenal MP4 milik net/http. Kotak ftyp-nya yang
+// dipakai, dan hanya bila pengunggah menyatakan audio/mp4.
+func TestNarrowContainerMengenaliM4A(t *testing.T) {
+	// Header ftyp berkas .m4a dari ffmpeg: brand "M4A ", tanpa "mp4".
+	m4a := []byte("\x00\x00\x00\x1cftypM4A \x00\x00\x02\x00M4A isomiso2\x00\x00\x00\x08free")
+	sniffed := http.DetectContentType(m4a)
+	if sniffed != "application/octet-stream" {
+		t.Skipf("net/http kini mengenali M4A sebagai %q; jalur ini tidak lagi dibutuhkan", sniffed)
+	}
+	if got := narrowContainer(sniffed, "audio/mp4", m4a); got != "audio/mp4" {
+		t.Errorf("M4A + audio/mp4 = %q", got)
+	}
+	for _, claim := range []string{"video/mp4", "audio/webm", "", "image/png"} {
+		if got := narrowContainer(sniffed, claim, m4a); got != sniffed {
+			t.Errorf("M4A + %q = %q, mau tetap %q", claim, got, sniffed)
+		}
+	}
+	// Tanpa kotak ftyp, pengakuan audio/mp4 tidak berarti apa-apa.
+	html := []byte("\x00\x00\x00\x1c<html><script>alert(1)</script>")
+	if got := narrowContainer("application/octet-stream", "audio/mp4", html); got != "application/octet-stream" {
+		t.Errorf("berkas tanpa ftyp diangkat jadi %q", got)
+	}
+}
+
+// Rekaman sungguhan dari MediaRecorder memang dikenali sebagai wadahnya oleh
+// sniffing — kalau suatu hari tidak, narrowContainer diam-diam berhenti
+// bekerja dan pesan suara tersimpan sebagai berkas unduhan.
+func TestSniffingMengenaliWadahRekaman(t *testing.T) {
+	webm := []byte{0x1A, 0x45, 0xDF, 0xA3, 0x9F, 0x42, 0x86, 0x81, 0x01, 0x42, 0xF7, 0x81}
+	ogg := append([]byte("OggS"), make([]byte, 24)...)
+	if got := http.DetectContentType(webm); got != "video/webm" {
+		t.Errorf("WebM terbaca %q", got)
+	}
+	if got := http.DetectContentType(ogg); got != "application/ogg" {
+		t.Errorf("Ogg terbaca %q", got)
+	}
+}
+
+func TestDurationHanyaUntukSuaraDanDalamJangkauan(t *testing.T) {
+	q := func(d string) url.Values { return url.Values{"d": {d}} }
+
+	if got := duration(q("12345"), "audio/webm"); got == nil || *got != 12345 {
+		t.Errorf("durasi sah terbaca %v", got)
+	}
+	for _, bad := range []string{"", "0", "-5", "abc", "3600001", "1e3"} {
+		if got := duration(q(bad), "audio/webm"); got != nil {
+			t.Errorf("d=%q diterima jadi %d", bad, *got)
+		}
+	}
+	for _, mt := range []string{"video/webm", "image/png", "application/pdf"} {
+		if got := duration(q("1000"), mt); got != nil {
+			t.Errorf("durasi menempel pada %s", mt)
 		}
 	}
 }

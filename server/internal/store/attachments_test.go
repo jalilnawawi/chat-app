@@ -160,3 +160,68 @@ func newAttachment(t *testing.T, s *store.Store, ctx context.Context, owner stor
 	}
 	return id
 }
+
+// Durasi pesan suara (Fase 13) ikut ke setiap tempat lampiran muncul: barisnya
+// sendiri, salinan jsonb di pesan, riwayat, dan salinan terusan. Kolom yang
+// lupa disebut di salah satu daftar kolom tidak dilaporkan compiler — dia
+// muncul sebagai pesan suara "0:00" di layar penerima terusan.
+func TestDurasiPesanSuaraIkutTersimpanDanTerusan(t *testing.T) {
+	s, ctx := newStore(t)
+
+	a := newUser(t, s, ctx, "suara_a")
+	b := newUser(t, s, ctx, "suara_b")
+	c := newUser(t, s, ctx, "suara_c")
+	conv := newDirect(t, s, ctx, a, b)
+	other := newDirect(t, s, ctx, a, c)
+
+	dur := 7250
+	id := uuid.New()
+	if err := s.CreateAttachment(ctx, a.ID, store.StoredAttachment{
+		Attachment: store.Attachment{ID: id, Name: "pesan-suara.weba", MIME: "audio/webm", Size: 999, DurationMS: &dur},
+		Key:        "/uji/" + id.String(),
+	}); err != nil {
+		t.Fatalf("catat rekaman: %v", err)
+	}
+
+	cek := func(where string, atts []store.Attachment) {
+		t.Helper()
+		if len(atts) != 1 || atts[0].DurationMS == nil || *atts[0].DurationMS != dur {
+			t.Fatalf("%s: durasi hilang: %+v", where, atts)
+		}
+	}
+
+	m, _, err := s.SendMessage(ctx, store.SendParams{
+		ID: uuid.New(), ConversationID: conv, SenderID: a.ID, AttachmentIDs: []uuid.UUID{id},
+	})
+	if err != nil {
+		t.Fatalf("kirim rekaman: %v", err)
+	}
+	cek("jawaban kirim", m.Attachments)
+
+	sa, err := s.AttachmentForRead(ctx, id, b.ID)
+	if err != nil {
+		t.Fatalf("baca rekaman: %v", err)
+	}
+	cek("baris lampiran", []store.Attachment{sa.Attachment})
+
+	hist, err := s.MessagesSince(ctx, conv, b.ID, 0, 10)
+	if err != nil || len(hist) == 0 {
+		t.Fatalf("riwayat: %v (%d pesan)", err, len(hist))
+	}
+	cek("riwayat", hist[len(hist)-1].Attachments)
+
+	fwd, _, err := s.SendMessage(ctx, store.SendParams{
+		ID: uuid.New(), ConversationID: other, SenderID: a.ID, ForwardFromID: &m.ID,
+	})
+	if err != nil {
+		t.Fatalf("teruskan rekaman: %v", err)
+	}
+	cek("terusan", fwd.Attachments)
+
+	// Lampiran lain tetap tanpa durasi.
+	img := newAttachment(t, s, ctx, a, "foto.png", "image/png")
+	got, err := s.AttachmentForRead(ctx, img, a.ID)
+	if err != nil || got.DurationMS != nil {
+		t.Fatalf("gambar membawa durasi: %v %+v", err, got.DurationMS)
+	}
+}

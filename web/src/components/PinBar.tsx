@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import type { Message, Pin } from '../types';
 import Icon from './Icon';
+import { formatDuration } from './VoicePlayer';
 
 const kosong: Pin[] = [];
 
@@ -14,6 +15,7 @@ export function excerpt(m: Message): string {
   if (!a) return 'Pesan';
   if (a.mime.startsWith('image/')) return '📷 Gambar';
   if (a.mime.startsWith('video/')) return '🎬 Video';
+  if (a.durationMs !== undefined) return `🎤 Pesan suara ${formatDuration(a.durationMs)}`;
   if (a.mime.startsWith('audio/')) return '🎵 Rekaman suara';
   return `📎 ${a.name}`;
 }
