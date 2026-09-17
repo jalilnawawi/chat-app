@@ -32,7 +32,12 @@ type Props = {
   callsMe?: boolean;
   nameOf?: (userId: string) => string;
   onReply?: (m: Message) => void;
-  onJump?: (messageId: string) => void;
+  /** `seq` ikut supaya pesan yang belum termuat tetap bisa dituju. */
+  onJump?: (messageId: string, seq?: number) => void;
+  onForward?: (m: Message) => void;
+  /** Ada hanya bila pembaca BOLEH menyematkan — tombolnya tidak ditampilkan kepada yang tidak boleh. */
+  onTogglePin?: (m: Message, pinned: boolean) => void;
+  pinned?: boolean;
   /** Dipanggil sekali saat pesan yang memanggil kita benar-benar masuk layar. */
   onSeen?: (seq: number) => void;
 };
@@ -64,6 +69,9 @@ export default function MessageBubble({
   nameOf,
   onReply,
   onJump,
+  onForward,
+  onTogglePin,
+  pinned = false,
   onSeen,
 }: Props) {
   const editMessage = useStore(s => s.editMessage);
@@ -78,11 +86,27 @@ export default function MessageBubble({
   // tidak berpihak kiri atau kanan, tidak punya tombol, tidak bisa disentuh.
   // Bentuknya sendiri yang mengatakan "ini bukan sesuatu yang dikatakan orang".
   if (message?.kind === 'system' && message.systemEvent) {
+    const ev = message.systemEvent;
+    // Catatan sematan menunjuk sebuah pesan, dan menekannya membawa ke sana —
+    // satu-satunya catatan sistem yang punya tujuan. Bentuknya tetap baris
+    // tengah; yang berubah cuma bahwa dia bisa ditekan.
+    const target = ev.type === 'message.pinned' && ev.messageId && onJump ? ev : null;
+    const cls =
+      'rounded-full border border-line bg-surface px-3 py-1 text-center text-[12px] text-muted';
     return (
       <div className="my-3 flex justify-center px-6">
-        <p className="rounded-full border border-line bg-surface px-3 py-1 text-center text-[12px] text-muted">
-          {systemText(message.systemEvent)}
-        </p>
+        {target ? (
+          <button
+            type="button"
+            onClick={() => onJump?.(target.messageId!, target.messageSeq)}
+            className={`${cls} inline-flex items-center gap-1.5 transition hover:border-accent hover:text-accent-text`}
+          >
+            <Icon name="sematan" size={13} />
+            {systemText(ev)}
+          </button>
+        ) : (
+          <p className={cls}>{systemText(ev)}</p>
+        )}
       </div>
     );
   }
@@ -180,6 +204,20 @@ export default function MessageBubble({
             callsMe && !deleted ? 'ring-2 ring-call' : ''
           } ${pending?.status === 'failed' ? 'opacity-70 ring-1 ring-danger' : ''}`}
         >
+          {/* Penanda terusan berdiri di atas isinya, dan hanya itu: siapa
+              penulis aslinya tidak ikut dibawa. Kalimat yang diteruskan
+              tanpa penanda ini terbaca sebagai kalimat pengirimnya sendiri. */}
+          {message?.forwarded && !deleted && (
+            <p
+              className={`mb-1 flex items-center gap-1 text-[12px] font-semibold italic ${
+                mine ? 'text-accent-ink/80' : 'text-muted'
+              }`}
+            >
+              <Icon name="teruskan" size={13} />
+              Diteruskan
+            </p>
+          )}
+
           {replyTo && !deleted && (
             <Quote reply={replyTo} mine={mine} nameOf={nameOf} onJump={onJump} />
           )}
@@ -220,6 +258,11 @@ export default function MessageBubble({
             mine ? 'justify-end' : 'justify-start'
           }`}
         >
+          {pinned && !deleted && (
+            <span title="Disematkan" className="text-accent-text">
+              <Icon name="sematan" size={13} />
+            </span>
+          )}
           {createdAt && <span className="tabular-nums">{time(createdAt)}</span>}
           {message?.editedAt && !deleted && <span>diedit</span>}
 
@@ -260,6 +303,16 @@ export default function MessageBubble({
               {onReply && (
                 <button onClick={() => onReply(message)} className={aksi}>
                   Balas
+                </button>
+              )}
+              {onForward && (
+                <button onClick={() => onForward(message)} className={aksi}>
+                  Teruskan
+                </button>
+              )}
+              {onTogglePin && (
+                <button onClick={() => onTogglePin(message, !pinned)} className={aksi}>
+                  {pinned ? 'Lepas sematan' : 'Sematkan'}
                 </button>
               )}
               {mine && (
@@ -311,7 +364,7 @@ function Quote({
   reply: ReplyPreview;
   mine: boolean;
   nameOf?: (userId: string) => string;
-  onJump?: (messageId: string) => void;
+  onJump?: (messageId: string, seq?: number) => void;
 }) {
   const label = reply.deleted
     ? 'Pesan ini dihapus'
@@ -320,7 +373,7 @@ function Quote({
   return (
     <button
       type="button"
-      onClick={() => onJump?.(reply.id)}
+      onClick={() => onJump?.(reply.id, reply.seq)}
       disabled={!onJump}
       className={`mb-2 flex w-full flex-col items-start gap-0.5 rounded-lg border-l-[3px] px-2.5 py-1.5 text-left text-[13px] transition ${
         mine
@@ -413,6 +466,10 @@ function systemText(ev: SystemEvent): string {
       return `${actor} mengganti judul grup jadi "${ev.title}"`;
     case 'owner.changed':
       return `${actor} menjadikan ${targets} pemilik grup`;
+    case 'message.pinned':
+      return `${actor} menyematkan sebuah pesan`;
+    case 'message.unpinned':
+      return `${actor} melepas sematan sebuah pesan`;
     default:
       return 'Grup diperbarui';
   }

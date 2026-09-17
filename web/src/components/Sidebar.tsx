@@ -41,10 +41,14 @@ function preview(c: Conversation): string {
         return `Judul grup jadi "${ev.title}"`;
       case 'owner.changed':
         return `${siapa} jadi pemilik grup`;
+      case 'message.pinned':
+        return `${ev.actor.name} menyematkan sebuah pesan`;
+      case 'message.unpinned':
+        return `${ev.actor.name} melepas sematan`;
     }
   }
 
-  if (last.body) return last.body;
+  if (last.body) return last.forwarded ? `Diteruskan: ${last.body}` : last.body;
 
   const atts = last.attachments ?? [];
   if (atts.length === 0) return '';
@@ -85,11 +89,15 @@ export default function Sidebar({
   hiddenOnMobile,
   accountOpen,
   onToggleAccount,
+  searchOpen,
+  onSearch,
 }: {
   /** Layar sempit hanya memuat satu kolom; saat percakapan terbuka, ini yang mengalah. */
   hiddenOnMobile: boolean;
   accountOpen: boolean;
   onToggleAccount: () => void;
+  searchOpen: boolean;
+  onSearch: () => void;
 }) {
   const me = useStore(s => s.me);
   const conversations = useStore(s => s.conversations);
@@ -184,13 +192,29 @@ export default function Sidebar({
         </div>
       </header>
 
-      <div className="px-3 py-3">
+      <div className="flex gap-2 px-3 py-3">
         <button
           onClick={() => setDialogOpen(true)}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-accent-soft px-3 py-2.5 text-sm font-semibold text-accent-text transition hover:brightness-95"
+          className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-accent-soft px-3 py-2.5 text-sm font-semibold text-accent-text transition hover:brightness-95"
         >
           <Icon name="tulis" size={18} />
           Percakapan baru
+        </button>
+        {/* Pencarian pesan berdiri di sebelahnya, bukan di dalam daftar:
+            yang dicari di sini adalah ISI percakapan, dan kotak di atas
+            daftar percakapan akan dikira menyaring nama. */}
+        <button
+          onClick={onSearch}
+          aria-pressed={searchOpen}
+          aria-label="Cari pesan"
+          title="Cari pesan di semua percakapan"
+          className={`grid size-11 shrink-0 place-items-center rounded-xl border transition ${
+            searchOpen
+              ? 'border-accent bg-accent-soft text-accent-text'
+              : 'border-line-strong text-muted hover:text-ink'
+          }`}
+        >
+          <Icon name="cari" />
         </button>
       </div>
 

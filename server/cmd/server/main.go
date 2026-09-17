@@ -313,6 +313,11 @@ func sweepOrphans(
 			}
 		}
 
+		if o.StorageKey == "" {
+			// Byte-nya masih dipakai salinan terusan. Barisnya sudah pergi,
+			// dan itu saja yang perlu terjadi.
+			continue
+		}
 		if err := blobs.Delete(opCtx, o.StorageKey); err != nil {
 			// Barisnya sudah terhapus, jadi ini tidak akan dicoba lagi. Yang
 			// tertinggal adalah berkas tanpa penunjuk — tidak terlihat siapa

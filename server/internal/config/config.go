@@ -171,6 +171,15 @@ type Config struct {
 	// dibatasi di sini bukan beban server melainkan kemampuan satu orang
 	// memenuhi percakapan orang lain dengan baris yang tidak mereka minta.
 	GroupRate ratelimit.Rule
+	// ForwardRate dihitung DI ATAS kuota pesan biasa. Meneruskan adalah cara
+	// termurah menyebarkan satu isi ke banyak ruang sekaligus — satu tekanan
+	// tombol, lima grup — dan justru itu jalan yang dipakai pesan berantai.
+	// Yang dibatasi bukan meneruskan, melainkan meneruskan TERUS-MENERUS.
+	ForwardRate ratelimit.Rule
+	// SearchRate melindungi satu-satunya kueri yang biayanya sebanding dengan
+	// jumlah KECOCOKAN, bukan jumlah hasil yang ditampilkan: kata yang umum
+	// menyuruh database mengurutkan setiap pesan yang memuatnya.
+	SearchRate ratelimit.Rule
 	// PushRate bukan kuota melawan penyalahgunaan, melainkan peredam dering:
 	// berapa kali sebuah percakapan boleh membangunkan satu orang. Bentuknya
 	// token bucket yang sama karena masalahnya memang sama — dan versi
@@ -331,6 +340,17 @@ func Load() (Config, error) {
 	// dalam sekali duduk, dan tiga puluh per menit jauh di atas kecepatan orang
 	// membaca daftar namanya sendiri.
 	if c.GroupRate, err = envRule("RATE_GROUP", 10, 30); err != nil {
+		return Config{}, err
+	}
+	// Lima terusan beruntun — satu pesan ke lima ruang, jumlah yang juga
+	// menjadi batas pilihan di layar — lalu satu tiap enam detik.
+	if c.ForwardRate, err = envRule("RATE_FORWARD", 5, 10); err != nil {
+		return Config{}, err
+	}
+	// Pencarian dijalankan sambil mengetik, dengan jeda di client. Dua puluh
+	// beruntun cukup untuk satu kalimat yang diketik lalu diperbaiki; enam puluh
+	// per menit jauh di atas kecepatan orang membaca hasilnya.
+	if c.SearchRate, err = envRule("RATE_SEARCH", 20, 60); err != nil {
 		return Config{}, err
 	}
 	// Mengganti nama atau status adalah tindakan sesekali. Dua puluh beruntun

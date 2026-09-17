@@ -28,7 +28,10 @@ export type IconName =
   | 'kamera'
   | 'matahari'
   | 'bulan'
-  | 'perangkat';
+  | 'perangkat'
+  | 'teruskan'
+  | 'sematan'
+  | 'bawah';
 
 /** Jalur `d` tiap ikon. Semuanya digambar di kotak 24×24 yang sama. */
 const JALUR: Record<IconName, string> = {
@@ -54,6 +57,10 @@ const JALUR: Record<IconName, string> = {
     'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
   bulan: 'M20.5 14.3A8.5 8.5 0 0 1 9.7 3.5a8.5 8.5 0 1 0 10.8 10.8z',
   perangkat: 'M20 4H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1M8 20h8M12 16v4',
+  // Cermin dari `balas`: panah yang sama, arah yang berlawanan.
+  teruskan: 'M15 14l5-5-5-5M20 9h-9a7 7 0 0 0-7 7v4',
+  sematan: 'M9 3.5h6M10 3.5l-.6 6.2L6.5 13v2h11v-2l-2.9-3.3L14 3.5M12 15v5.5',
+  bawah: 'M12 5v14m-6-6 6 6 6-6',
 };
 
 export default function Icon({

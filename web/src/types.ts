@@ -138,11 +138,28 @@ export type SystemParty = { id: string; name: string };
  * siapa pun.
  */
 export type SystemEvent = {
-  type: 'member.added' | 'member.removed' | 'member.left' | 'title.changed' | 'owner.changed';
+  type:
+    | 'member.added'
+    | 'member.removed'
+    | 'member.left'
+    | 'title.changed'
+    | 'owner.changed'
+    | 'message.pinned'
+    | 'message.unpinned';
   actor: SystemParty;
   targets?: SystemParty[];
   /** Judul BARU, untuk title.changed. */
   title?: string;
+  /**
+   * Pesan yang disematkan atau dilepas.
+   *
+   * Hanya penunjuknya — TIDAK ada cuplikan isinya. Isi pesan bisa dihapus, dan
+   * cuplikan yang dibekukan di catatan ini akan terus menampilkan kalimat yang
+   * sudah dihapus penulisnya. `messageSeq` boleh ikut karena dia tidak pernah
+   * berubah, dan dialah yang membuat catatan ini bisa diklik untuk melompat.
+   */
+  messageId?: string;
+  messageSeq?: number;
 };
 
 export type Message = {
@@ -180,6 +197,45 @@ export type Message = {
    */
   kind: 'user' | 'system';
   systemEvent?: SystemEvent;
+  /**
+   * Isinya disalin dari pesan lain. Cuma penanda, tanpa asal-usul: siapa yang
+   * menulisnya dan di percakapan mana bukan sesuatu yang dibagikan penulisnya.
+   */
+  forwarded: boolean;
+};
+
+/** Pesan yang disematkan. Isinya dibaca ulang setiap kali, seperti kutipan. */
+export type Pin = {
+  message: Message;
+  /** null bila akun yang menyematkannya sudah tidak ada. */
+  pinnedBy: string | null;
+  pinnedByName: string;
+  pinnedAt: string;
+};
+
+/**
+ * Satu hasil pencarian.
+ *
+ * Nama dan foto pengirim ikut, berbeda dari riwayat biasa: hasil lintas
+ * percakapan datang dari ruang yang daftar anggotanya belum tentu pernah
+ * dimuat di sini.
+ */
+export type SearchHit = {
+  message: Message;
+  senderName: string;
+  senderAvatarUrl?: string;
+};
+
+export type SearchResult = {
+  hits: SearchHit[];
+  /**
+   * Kata yang benar-benar dicocokkan, SETELAH diurai server. Yang disorot
+   * adalah kata ini, bukan hasil penguraian di sini — dua pengurai yang
+   * berbeda pendapat tentang "13.00" menghasilkan sorotan yang tidak menunjuk
+   * apa pun.
+   */
+  terms: string[];
+  nextCursor?: string;
 };
 
 export type Member = {

@@ -154,6 +154,13 @@ type Message struct {
 
 	// SystemEvent nil untuk pesan biasa.
 	SystemEvent *SystemEvent `json:"systemEvent,omitempty"`
+
+	// Forwarded menandai pesan yang isinya disalin dari pesan lain.
+	//
+	// Cuma penanda, tanpa asal-usul: siapa penulis aslinya dan di percakapan
+	// mana dia menulisnya bukan sesuatu yang dibagikan oleh penulis itu. Lihat
+	// catatannya di 0008_menemukan_pesan.sql.
+	Forwarded bool `json:"forwarded"`
 }
 
 // SystemParty adalah orang yang disebut sebuah catatan sistem, beserta namanya
@@ -178,6 +185,12 @@ const (
 	SystemMemberLeft    = "member.left"
 	SystemTitleChanged  = "title.changed"
 	SystemOwnerChanged  = "owner.changed"
+
+	// Sematan dicatat sebagai kejadian seperti pengelolaan grup, dan catatan
+	// itulah yang memberi tahu client yang sedang menyusul bahwa daftar
+	// sematannya perlu dibaca ulang. Lihat store/pins.go.
+	SystemMessagePinned   = "message.pinned"
+	SystemMessageUnpinned = "message.unpinned"
 )
 
 type SystemEvent struct {
@@ -186,6 +199,18 @@ type SystemEvent struct {
 	Targets []SystemParty `json:"targets,omitempty"`
 	// Title diisi untuk title.changed: judul BARU-nya.
 	Title string `json:"title,omitempty"`
+
+	// MessageID dan MessageSeq diisi untuk sematan: pesan mana yang disematkan
+	// atau dilepas.
+	//
+	// Yang disalin cuma penunjuknya, TIDAK ada cuplikan isinya. Isi pesan bisa
+	// diedit dan dihapus; cuplikan yang dibekukan di dalam catatan ini akan
+	// tetap menampilkan kalimat yang sudah dihapus penulisnya, selamanya, di
+	// tengah riwayat semua orang. `seq` boleh disalin karena dia memang tidak
+	// pernah berubah — dan dia yang membuat catatan ini bisa diklik untuk
+	// melompat ke pesannya walau pesan itu jauh di belakang riwayat.
+	MessageID  *uuid.UUID `json:"messageId,omitempty"`
+	MessageSeq int64      `json:"messageSeq,omitempty"`
 }
 
 // ReplyPreview adalah secuil pesan yang dibalas, secukupnya untuk gelembung
@@ -292,6 +317,30 @@ type StoredAttachment struct {
 	ThumbKey  string
 	ThumbMIME string
 	ThumbSize int64
+}
+
+// Pin adalah satu pesan yang disematkan, beserta siapa yang menyematkannya.
+//
+// Isi pesannya dibaca lewat join setiap kali, bukan disalin — aturan yang sama
+// dengan kutipan balasan: yang diedit tampil versi barunya.
+type Pin struct {
+	Message Message `json:"message"`
+	// PinnedBy nil bila akun yang menyematkannya sudah tidak ada.
+	PinnedBy     *uuid.UUID `json:"pinnedBy"`
+	PinnedByName string     `json:"pinnedByName"`
+	PinnedAt     time.Time  `json:"pinnedAt"`
+}
+
+// SearchHit adalah satu pesan yang cocok dengan pencarian.
+//
+// Nama dan foto pengirim ikut, berbeda dari riwayat biasa: hasil pencarian
+// lintas percakapan datang dari ruang-ruang yang daftar anggotanya belum tentu
+// pernah dimuat client, dan hasil yang semuanya bertuliskan "Seseorang" tidak
+// bisa dipakai memilih.
+type SearchHit struct {
+	Message         Message `json:"message"`
+	SenderName      string  `json:"senderName"`
+	SenderAvatarURL string  `json:"senderAvatarUrl,omitempty"`
 }
 
 type Member struct {
