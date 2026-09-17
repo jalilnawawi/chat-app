@@ -15,15 +15,14 @@ import Avatar, { dotFor, statusLabel } from './Avatar';
 import MessageBubble from './MessageBubble';
 import UploadStrip from './UploadStrip';
 import GroupPanel from './GroupPanel';
+import ForwardDialog from './ForwardDialog';
 import Icon from './Icon';
+import PinBar from './PinBar';
 import Tanda from './Tanda';
 import type { Message } from '../types';
 
 /** Indikator "sedang mengetik" dianggap basi setelah jeda ini. */
 const TYPING_TTL_MS = 4000;
-
-/** Berapa halaman ke belakang yang boleh dimuat saat melompat ke pesan lama. */
-const JUMP_MAX_PAGES = 5;
 
 /** Lama sorotan setelah melompat ke sebuah pesan. */
 const JUMP_HIGHLIGHT_MS = 2000;
@@ -66,13 +65,27 @@ function labelHari(iso: string): string {
   });
 }
 
-export default function ChatPanel({ send }: { send: (type: string, payload: unknown) => void }) {
+export default function ChatPanel({
+  send,
+  onSearch,
+}: {
+  send: (type: string, payload: unknown) => void;
+  /** Membuka panel pencarian, dipersempit ke percakapan ini. */
+  onSearch: (conversationId: string) => void;
+}) {
   const me = useStore(s => s.me);
   const activeId = useStore(s => s.activeId);
   const conversations = useStore(s => s.conversations);
   const messages = useStore(s => s.messages);
   const pending = useStore(s => s.pending);
   const hasMore = useStore(s => s.hasMore);
+  const hasNewer = useStore(s => s.hasNewer);
+  const pins = useStore(s => s.pins);
+  const jumpTarget = useStore(s => s.jumpTarget);
+  const storeJump = useStore(s => s.jumpTo);
+  const loadNewer = useStore(s => s.loadNewer);
+  const returnToLatest = useStore(s => s.returnToLatest);
+  const setPinned = useStore(s => s.setPinned);
   const members = useStore(s => s.members);
   const typing = useStore(s => s.typing);
   const online = useStore(s => s.online);
@@ -97,6 +110,8 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
   const [mentionIndex, setMentionIndex] = useState(0);
   const [jumped, setJumped] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [forwarding, setForwarding] = useState<Message | null>(null);
+  const [pinError, setPinError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -183,37 +198,44 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
   );
 
   /**
-   * Melompat ke pesan yang dikutip.
+   * Melompat ke sebuah pesan: kutipan, catatan sematan, bilah sematan.
    *
-   * Pesannya bisa saja belum termuat — kutipan bertahan selamanya, sedangkan
-   * riwayat dimuat sehalaman demi sehalaman. Jadi halaman-halaman lama ditarik
-   * dulu sampai pesannya ketemu, dengan batas: percakapan yang sudah puluhan
-   * ribu pesan tidak boleh menarik semuanya hanya karena seseorang menekan
-   * sebuah kutipan tua.
+   * Memuat pesannya adalah urusan store — termasuk memuat JENDELA di
+   * sekitarnya bila pesannya jauh di belakang. Yang tersisa di sini cuma
+   * menggulir ke sana, dan itu dikerjakan efek di bawah, supaya lompatan yang
+   * dimulai dari luar panel ini — hasil pencarian — mendarat dengan cara yang
+   * sama persis.
    */
   const jumpTo = useCallback(
-    async (messageId: string) => {
-      const reveal = () => {
-        const el = document.getElementById(`msg-${messageId}`);
-        if (!el) return false;
-        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        setJumped(messageId);
-        return true;
-      };
-
-      if (reveal()) return;
-      if (!activeId) return;
-
-      for (let page = 0; page < JUMP_MAX_PAGES; page++) {
-        if (!useStore.getState().hasMore[activeId]) break;
-        await loadOlder(activeId);
-        // Menunggu satu frame: baris barunya baru ada di DOM setelah React
-        // sempat menggambar, dan getElementById membaca DOM, bukan state.
-        await new Promise(requestAnimationFrame);
-        if (reveal()) return;
-      }
+    (messageId: string, seq?: number) => {
+      if (activeId) void storeJump(activeId, messageId, seq);
     },
-    [activeId, loadOlder],
+    [activeId, storeJump],
+  );
+
+  useEffect(() => {
+    if (!jumpTarget || jumpTarget.conversationId !== activeId) return;
+    // Menunggu satu frame: baris barunya baru ada di DOM setelah React sempat
+    // menggambar, dan getElementById membaca DOM, bukan state.
+    const frame = requestAnimationFrame(() => {
+      const el = document.getElementById(`msg-${jumpTarget.messageId}`);
+      if (!el) return;
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      setJumped(jumpTarget.messageId);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [jumpTarget, activeId]);
+
+  const onForward = useCallback((m: Message) => setForwarding(m), []);
+
+  const onTogglePin = useCallback(
+    (m: Message, pinned: boolean) => {
+      setPinError(null);
+      setPinned(m, pinned).catch(err =>
+        setPinError(err instanceof Error ? err.message : 'Sematan gagal diubah'),
+      );
+    },
+    [setPinned],
   );
 
   useEffect(() => {
@@ -255,6 +277,15 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
       </section>
     );
   }
+
+  // Siapa yang boleh menyematkan: kedua orang di DM, pemilik di grup — aturan
+  // yang sama dengan server. Tombolnya tidak ditampilkan kepada yang tidak
+  // boleh, bukan ditampilkan lalu ditolak.
+  const canPin =
+    conversation.type === 'direct' ||
+    roster.some(m => m.userId === me.id && m.role === 'owner');
+  const pinnedIds = new Set((pins[activeId] ?? []).map(p => p.message.id));
+  const viewingOld = hasNewer[activeId] === true;
 
   const typers = Object.entries(typing[activeId] ?? {})
     .filter(([userId, entry]) => userId !== me.id && Date.now() - entry.at < TYPING_TTL_MS)
@@ -474,6 +505,15 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
           </p>
         </div>
 
+        <button
+          onClick={() => onSearch(activeId)}
+          aria-label="Cari di percakapan ini"
+          title="Cari di percakapan ini"
+          className="grid size-10 shrink-0 place-items-center rounded-xl text-muted transition hover:bg-canvas hover:text-ink"
+        >
+          <Icon name="cari" />
+        </button>
+
         {/* Hanya grup yang punya pengelolaan. DM tidak bisa ditambahi orang —
             lihat catatan kebocoran di server/internal/store/group.go — jadi
             tombolnya memang tidak ada di sana, bukan ada tapi menolak. */}
@@ -493,6 +533,26 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
           </button>
         )}
       </header>
+
+      <PinBar
+        conversationId={activeId}
+        canPin={canPin}
+        nameOf={nameOf}
+        onJump={m => jumpTo(m.id, m.seq)}
+      />
+
+      {pinError && (
+        <p className="flex items-center justify-between gap-2 border-b border-line bg-danger-soft px-4 py-2 text-[13px] text-danger">
+          {pinError}
+          <button
+            onClick={() => setPinError(null)}
+            aria-label="Tutup"
+            className="grid size-6 shrink-0 place-items-center rounded-md hover:bg-surface"
+          >
+            <Icon name="tutup" size={14} />
+          </button>
+        </p>
+      )}
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 md:px-6 md:py-4">
         {/* Pesan ditumpuk dari bawah: percakapan yang masih sedikit tetap
@@ -550,13 +610,31 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
                     callsMe={callsMe(m)}
                     nameOf={nameOf}
                     onReply={onReply}
-                    onJump={id => void jumpTo(id)}
+                    onJump={jumpTo}
+                    onForward={onForward}
+                    onTogglePin={canPin ? onTogglePin : undefined}
+                    pinned={pinnedIds.has(m.id)}
                     onSeen={onSeenMention}
                   />
                 </div>
               </div>
             );
           })}
+
+          {/* Jendela lama: yang di bawahnya belum dimuat. Dikatakan
+              terang-terangan, karena riwayat yang berhenti di tengah tanpa
+              keterangan terbaca seperti percakapan yang memang berakhir di
+              sana. */}
+          {viewingOld && (
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+              <button
+                onClick={() => void loadNewer(activeId)}
+                className="rounded-full border border-line bg-surface px-3.5 py-1.5 text-[13px] font-medium text-muted transition hover:border-accent hover:text-accent-text"
+              >
+                Muat pesan berikutnya
+              </button>
+            </div>
+          )}
 
           {queue.map((pe, i) => (
             <MessageBubble
@@ -575,6 +653,21 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
           ))}
 
           <div ref={bottomRef} />
+
+          {/* Menempel di tepi bawah area baca selama jendela lama terbuka —
+              jalan pulang yang selalu terlihat, di mana pun orangnya sedang
+              menggulir. */}
+          {viewingOld && (
+            <div className="pointer-events-none sticky bottom-1 z-10 mt-2 flex justify-center">
+              <button
+                onClick={() => void returnToLatest(activeId)}
+                className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-2 text-[13px] font-semibold text-accent-ink shadow-pop transition hover:brightness-110"
+              >
+                <Icon name="bawah" size={16} />
+                Ke pesan terbaru
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -713,6 +806,10 @@ export default function ChatPanel({ send }: { send: (type: string, payload: unkn
         </div>
       </div>
     </section>
+
+      {forwarding && (
+        <ForwardDialog message={forwarding} onClose={() => setForwarding(null)} />
+      )}
 
       {panelOpen && conversation.type === 'group' && (
         <GroupPanel conversation={conversation} onClose={() => setPanelOpen(false)} />

@@ -5,7 +5,8 @@ Mendukung DM 1-on-1 dan grup, presence, typing indicator, read receipt, edit &
 hapus pesan, lampiran berkas, membalas pesan, menyebut orang (@), reaksi emoji,
 kelola grup (tambah/keluarkan anggota, ganti judul, pindah pemilik), kelola akun
 (foto profil, email terverifikasi, ganti & pulihkan password, daftar perangkat,
-status), serta push notification untuk yang sedang tidak membuka aplikasi.
+status), mencari isi pesan, meneruskan dan menyematkan pesan, serta push
+notification untuk yang sedang tidak membuka aplikasi.
 
 Status: **MVP jalan end-to-end, dan sudah diuji untuk 1000 koneksi bersamaan.**
 Catatan operasional multi-instance ada di [docs/scaling.md](docs/scaling.md);
@@ -15,7 +16,8 @@ permintaan sepotong di
 [docs/thumbnail-dan-range.md](docs/thumbnail-dan-range.md); membalas, menyebut,
 dan bereaksi di [docs/balas-sebut-reaksi.md](docs/balas-sebut-reaksi.md);
 pengelolaan grup di [docs/kelola-grup.md](docs/kelola-grup.md); pengelolaan akun
-dan profil di [docs/kelola-akun.md](docs/kelola-akun.md).
+dan profil di [docs/kelola-akun.md](docs/kelola-akun.md); mencari, meneruskan,
+dan menyematkan pesan di [docs/menemukan-pesan.md](docs/menemukan-pesan.md).
 
 ## Menjalankan
 
@@ -100,6 +102,7 @@ docs/thumbnail-dan-range.md  turunan gambar dan permintaan sepotong
 docs/balas-sebut-reaksi.md  membalas, menyebut, dan bereaksi
 docs/kelola-grup.md    pengelolaan grup
 docs/kelola-akun.md    akun, profil, sesi, dan status
+docs/menemukan-pesan.md  cari, teruskan, sematkan, dan jendela riwayat
 ```
 
 ## Keputusan desain
@@ -283,6 +286,31 @@ disunting, dihapus, dibalas, atau direaksi oleh siapa pun.
 ruangnya dibuka, sedangkan sebutan baru padam setelah pesan yang memanggil
 namanya benar-benar terlihat di layar. Satu endpoint untuk keduanya berarti
 membuka percakapan sekilas sudah cukup untuk melupakan bahwa ada yang memanggil.
+
+Cari, teruskan, sematkan:
+
+```
+GET    /api/search?q=&conversationId=&cursor=      → { hits, terms, nextCursor }
+GET    /api/conversations/{id}/messages?around=<seq>   jendela yang memuat seq itu
+GET    /api/conversations/{id}/messages?after=<seq>    lanjutan ke arah terbaru
+POST   /api/conversations/{id}/messages   { id, body: "", forwardFromId }   teruskan
+PUT    /api/messages/{id}/pin              DM: keduanya · grup: pemilik
+DELETE /api/messages/{id}/pin
+GET    /api/conversations/{id}/pins
+```
+
+Pencarian memakai `tsvector` dengan konfigurasi `simple` dan mencocokkan kata
+utuh serta awalannya (kata tiga huruf ke atas): "kirim" menemukan "kirimkan",
+tapi tidak "dikirim". Stemmer `indonesian` diuji dan ditolak; hasilnya ada di
+dokumennya. Percakapan orang lain dijawab hasil kosong, bukan 404.
+
+Pesan terusan hanya membawa penanda "diteruskan", **tanpa** nama penulis asli
+atau percakapan asalnya. Lampirannya berbagi byte dengan aslinya, dan penyapu
+lampiran yatim tidak membuang byte yang masih ditunjuk salinan lain.
+
+Sematan meninggalkan catatan sistem, dan catatan itu yang memberi tahu client
+(termasuk yang menyusul setelah reconnect) untuk membaca ulang daftar
+sematannya. Paling banyak 20 per percakapan.
 
 ## Akun & profil
 

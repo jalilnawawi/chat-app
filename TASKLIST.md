@@ -27,7 +27,16 @@ terverifikasi, ganti dan pulihkan password, daftar sesi aktif, dan status yang
 bertahan melewati logout. Ganti password memutus koneksi di instance lain, dan
 `busy` meredam push. Lihat [docs/kelola-akun.md](docs/kelola-akun.md).
 
-Berikutnya: **Fase 11 — menemukan pesan** (cari, teruskan, pin).
+Tampilan: **SELESAI** (16 Sep 2026) — palet yang rasio kontrasnya dihitung
+lebih dulu, huruf lokal, tata letak yang bisa dipakai di layar 360 px, dan saklar
+tema tiga keadaan. Dikerjakan sebagai Fase 11, menggantikan rencana semula.
+
+Menemukan pesan: **SELESAI** (17 Sep 2026) — cari isi pesan, teruskan, dan
+sematkan, plus jendela riwayat untuk melompat ke pesan setahun lalu. Diukur pada
+sejuta pesan: index pencarian 43 MB (trigram 207 MB), kata umum 23–69 ms lintas
+semua percakapan. Lihat [docs/menemukan-pesan.md](docs/menemukan-pesan.md).
+
+Berikutnya: lihat **Fase 13 — kandidat berikutnya**.
 
 Legend: `[ ]` belum · `[~]` jalan · `[x]` selesai
 
@@ -673,11 +682,130 @@ sekali. Uraian lengkap di [docs/kelola-akun.md](docs/kelola-akun.md).
   jalur pemulihan yang setengah jadi lebih berbahaya daripada tidak ada 2FA
   sama sekali.
 
-## Fase 11 — Kandidat berikutnya
-- [ ] **Menemukan pesan**: cari, teruskan, dan pin — kelompok yang saling
-      menguatkan seperti Fase 9. `pg_trgm` sudah terpasang sejak Fase 6, tapi
-      untuk isi pesan `tsvector` hampir pasti pilihan yang lebih tepat daripada
-      trigram, dan itu keputusan yang layak ditulis saat mengerjakannya.
+## Fase 11 — Tampilan
+Dikerjakan di antara Fase 10 dan rencana "menemukan pesan", yang karenanya
+bergeser jadi Fase 12. Satu syarat menaungi seluruhnya: aplikasinya dipakai
+lintas umur, dan itu angka, bukan selera. Uraian lengkap ada di pesan commit
+`bab9535`.
+
+- [x] Palet dipilih SETELAH rasio kontrasnya dihitung (OKLCH → sRGB → WCAG):
+      teks utama 13,2:1, teks redup 4,87:1, putih di atas teal 4,58:1
+- [x] Tiap nada punya satu pekerjaan — mangga hanya berarti "ada yang
+      memanggilmu"
+- [x] Plus Jakarta Sans dipasang lokal lewat @fontsource, bukan CDN; dasar huruf
+      naik dari 14px ke 15px
+- [x] Gelembung asimetris, rentetan dikelompokkan, pemisah hari
+- [x] Layar sempit: daftar dan percakapan bergantian mengisi satu kolom, dan
+      yang menentukan adalah `activeId`, bukan state tampilan tersendiri
+- [x] Emoji sebagai lambang tombol diganti ikon garis
+- [x] Saklar tema TIGA keadaan, dipilih lewat atribut, dipasang sebelum modul
+      utama dimuat supaya tidak ada kedipan putih
+- [x] Diperiksa lewat tangkapan layar pada 1400/760/390 px, terang dan gelap
+
+## Fase 12 — Menemukan pesan
+Cari, teruskan, dan sematkan — kelompok yang saling menguatkan seperti Fase 9.
+Ketiganya berbagi satu kebutuhan baru: melompat ke pesan yang jauh di belakang
+riwayat. Keputusan dan angka lengkapnya di
+[docs/menemukan-pesan.md](docs/menemukan-pesan.md).
+
+Satu aturan di atas semuanya: **pencarian tidak pernah boleh menemukan apa yang
+tidak akan ditampilkan riwayat.**
+
+### Cari
+- [x] `tsvector` dengan konfigurasi `simple`, **diukur** melawan trigram pada
+      sejuta pesan: index 43 MB lawan 207 MB, dibangun 8,6 lawan 18,9 detik —
+      dan `ILIKE '%api%'` menemukan 9.833 pesan yang tidak satu pun memuat kata
+      "api"
+- [x] `indonesian` **diuji dan ditolak**: "mengirimkan" jadi `irim`, "perdana"
+      jadi `dana`, dan "ngirim" tidak disentuh sama sekali
+- [x] Pencocokan awalan untuk kata tiga huruf ke atas; yang lebih pendek
+      dicocokkan utuh (`'ra'` 0,1 ms, `'ra':*` 50 ms, `'r':*` 100 ms)
+- [x] Index ekspresi parsial, bukan kolom tersimpan — hasil diurutkan terbaru,
+      bukan menurut `ts_rank`. Diperiksa bahwa UPDATE lampiran tetap HOT.
+- [x] Kueri diurai pengurai Postgres yang sama dengan index, lalu di-cast ke
+      `tsquery` tanpa diurai ulang, tiap kata dikutip
+- [x] Izin di dalam kueri; percakapan orang lain dijawab hasil kosong, bukan 404
+- [x] CTE `MATERIALIZED` supaya index dipindai sekali — lihat temuan di bawah
+- [x] Cursor `(created_at, id)`, satu baris lebih untuk "masih ada lagi?"
+- [x] Kuota sendiri (`RATE_SEARCH`)
+- [x] UI: satu panel untuk dua cakupan yang bisa dipindah tanpa mengetik ulang,
+      sorotan dari kata yang dicocokkan SERVER, aturan pencocokan dikatakan di
+      muka
+
+### Jendela riwayat
+- [x] `?around=<seq>` dihitung dari `seq` yang tanpa lompatan — satu `BETWEEN`
+- [x] `?after=<seq>` untuk melanjutkan ke arah terbaru
+- [x] Client: dekat → tarik halaman lama; jauh → jendela, dengan `hasNewer`
+- [x] Pesan baru selama jendela terbuka ditampung, bukan ditempel — sejak
+      permintaan jendela berangkat, bukan sejak jawabannya tiba
+- [x] Jendela lama tidak ikut menyusul, tidak menandai terbaca, dan menulis
+      pesan mengembalikan layar ke ujung lebih dulu
+
+### Teruskan
+- [x] **Meneruskan adalah mengirim pesan** — jalur, id client, kuota, siaran,
+      dan push yang sama; lima tujuan adalah lima pengiriman
+- [x] Isinya disalin, asal-usulnya TIDAK: kolom `forwarded` saja, tanpa penunjuk
+      ke sumber, penulis, atau percakapan asal
+- [x] Pengirim wajib bisa membaca sumbernya (403 untuk empat keadaan sekaligus)
+- [x] Terusan + isi, lampiran, kutipan, atau sebutan: 400
+- [x] Baris lampiran disalin, byte-nya dipakai bersama; penyapu yatim tidak
+      membuang byte yang masih ditunjuk baris lain
+- [x] Urutan kunci **pesan dulu, percakapan kemudian**
+- [x] Kiriman ulang yang sudah tersimpan tidak menyentuh sumbernya
+- [x] Kuota sendiri (`RATE_FORWARD`), dan dialog membatasi lima tujuan — angka
+      yang sama
+- [x] Push dan pratinjau sidebar menyebut "Diteruskan"
+
+### Sematkan
+- [x] DM: keduanya; grup: pemilik — aturan Fase 9b
+- [x] Sematkan dan lepas meninggalkan catatan sistem, dan catatan itulah tanda
+      untuk membaca ulang daftar — tanpa jam ketiga
+- [x] Catatan membawa `messageId` + `messageSeq`, TANPA cuplikan isi, dan bisa
+      ditekan untuk melompat
+- [x] Pesan yang dihapus ikut lepas; daftar dibaca ulang setiap percakapan dibuka
+- [x] Paling banyak 20, dengan penolakan yang menyebut batasnya
+- [x] UI: satu baris di bawah kepala percakapan, daftar lengkap atas permintaan,
+      tombol yang tidak boleh ditekan tidak ditampilkan
+
+### Verifikasi
+- [x] `go vet` + `go test -race ./...` bersih; 16 test store baru, plus test
+      `storeDetail`
+- [x] `tsc --noEmit` + `vite build` bersih
+- [x] Tolok ukur sejuta pesan di database terpisah
+- [x] Uji HTTP langsung: 50/50
+- [x] Verifikasi browser (Brave, konteks terpisah, puppeteer-core): 33/33,
+      termasuk layar 390 px
+
+### Tiga hal yang ditemukan OLEH mengukur dan menjalankannya
+1. **Planner memindai index pencarian sekali per percakapan.** Ditulis sebagai
+   satu kueri biasa, pencarian satu kata untuk orang yang ada di 63 grup
+   memindai index 63 kali: 212 ms. Kueri dua kata sempat 300 ms, tapi rencana
+   khususnya cuma 15 ms — yang lambat adalah rencana UMUM yang dipilih Postgres
+   setelah lima eksekusi prepared statement, dan pgx memang menyimpannya.
+   `go test` tidak akan pernah melihat ini: dia berjalan pada puluhan baris.
+2. **Menyunting pesan menghapus semua reaksinya dari layar orang lain** — bug
+   sejak Fase 9. Siaran suntingan tidak pernah membawa reaksi, dan client
+   menimpa pesannya apa adanya. Dibuktikan dengan mematikan perbaikannya dan
+   menjalankan uji browser yang sama (`false` lawan `true`).
+3. **Setiap 409 berbunyi "sudah ada atau bentrok"**, dan setiap 400 dari store
+   dibuka dengan "invalid:". Batas sematan adalah penolakan yang tidak bisa
+   ditebak dari kalimat itu. `storeDetail` kini mengambil keterangan yang
+   ditempelkan dengan sengaja, dan hanya itu.
+
+Satu lagi ketahuan saat menulis kodenya, sebelum sempat terjadi: rancangan
+pertama jalur terusan mengunci percakapan tujuan lebih dulu, urutan yang
+berlawanan dengan penghapusan pesan — deadlock bila sumber dan tujuan adalah
+percakapan yang sama.
+
+### Yang sengaja TIDAK dikerjakan
+- **Peringkat kemiripan** — terbaru di atas adalah yang dicari di chat
+- **Mencari isi lampiran** — isi PDF menuntut pengurai dokumen di dalam proses
+- **Menyebut penulis asli pada terusan** — lihat alasannya di dokumen
+- **Pencarian lintas percakapan yang tidak sebanding jumlah kecocokan** — biaya
+  kata umum tumbuh bersama seluruh tabel; jalannya (partisi atau `btree_gin`)
+  sudah ditulis, pemicunya belum ada
+
+## Fase 13 — Kandidat berikutnya
 - [ ] **Pesan suara**: lampiran audio dan permintaan sepotong sudah jalan sejak
       Fase 8; yang belum cuma UI perekamnya
 - [ ] Partisi `messages` — tetap ditunda, dan pemicunya tetap belum ada; rencana

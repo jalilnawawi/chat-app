@@ -7,6 +7,7 @@ import type {
   Member,
   Message,
   PendingMessage,
+  Pin,
   ReactionSummary,
   ServerConfig,
   StatusKind,
@@ -40,6 +41,25 @@ const MAX_ATTACHMENTS = 10;
 
 type TypingEntry = { displayName: string; at: number };
 
+/**
+ * Berapa pesan di belakang pesan tertua yang dimuat masih dianggap "dekat".
+ *
+ * Yang sedekat ini disusul dengan menarik halaman lama satu per satu, dan
+ * riwayatnya tetap utuh sampai ujung terbaru. Yang lebih jauh dimuat sebagai
+ * JENDELA tersendiri — menarik puluhan halaman untuk menampilkan satu pesan
+ * tahun lalu adalah lompatan yang tidak pernah sampai.
+ */
+const JUMP_NEAR = 150;
+
+/** Batas pilihan saat meneruskan — sama dengan kelonggaran kuota terusan di server. */
+export const MAX_FORWARD_TARGETS = 5;
+
+/** Tujuan lompatan terakhir; `nonce` membuat lompatan ke pesan yang sama terbaca sebagai lompatan baru. */
+type JumpTarget = { conversationId: string; messageId: string; nonce: number };
+
+/** Hasil meneruskan ke beberapa percakapan sekaligus, per tujuan. */
+export type ForwardOutcome = { conversationId: string; ok: boolean; error?: string };
+
 type State = {
   me: Me | null;
   connected: boolean;
@@ -70,7 +90,21 @@ type State = {
    */
   uploads: Record<string, Upload[]>;
   hasMore: Record<string, boolean>;
+  /**
+   * true = yang sedang dimuat adalah JENDELA di tengah riwayat, bukan riwayat
+   * yang menyentuh ujung terbaru. Lihat jumpTo.
+   *
+   * Selama ini true, pesan baru yang datang lewat siaran TIDAK ditempelkan ke
+   * daftar: menempelkannya di bawah jendela berarti dua potong riwayat dengan
+   * lubang tak terlihat di antaranya. Mereka ditampung di `stash` dan
+   * digabungkan begitu jendelanya menyambung kembali ke ujung.
+   */
+  hasNewer: Record<string, boolean>;
   members: Record<string, Member[]>;
+  /** Pesan yang disematkan, per percakapan. undefined = belum pernah dimuat. */
+  pins: Record<string, Pin[]>;
+  /** Pesan yang baru saja dituju lompatan; ChatPanel yang menggulir ke sana. */
+  jumpTarget: JumpTarget | null;
 
   online: Set<string>;
   /**
@@ -104,6 +138,19 @@ type State = {
   /** Melepas percakapan yang sedang dibuka; di layar sempit inilah "kembali". */
   closeConversation: () => void;
   loadOlder: (id: string) => Promise<void>;
+  /** Memuat lanjutan jendela ke arah yang lebih baru. */
+  loadNewer: (id: string) => Promise<void>;
+  /** Meninggalkan jendela dan kembali ke pesan terbaru. */
+  returnToLatest: (id: string) => Promise<void>;
+  /**
+   * Melompat ke sebuah pesan, memuatnya dulu bila perlu — termasuk membuka
+   * percakapannya. `seq` wajib untuk pesan yang belum termuat.
+   */
+  jumpTo: (conversationId: string, messageId: string, seq?: number) => Promise<boolean>;
+
+  loadPins: (conversationId: string) => Promise<void>;
+  setPinned: (message: Message, pinned: boolean) => Promise<void>;
+  forwardMessage: (messageId: string, targets: string[]) => Promise<ForwardOutcome[]>;
 
   sendMessage: (conversationId: string, body: string) => Promise<void>;
   setReplyTo: (conversationId: string, message: Message | null) => void;
@@ -173,12 +220,39 @@ type State = {
  */
 const files = new Map<string, File>();
 
+/**
+ * Pesan yang datang selagi percakapannya sedang menampilkan jendela lama.
+ *
+ * Di luar state dengan alasan yang sama dengan `files`: tidak ada yang
+ * menampilkannya, dan menyimpannya di state berarti setiap pesan baru memicu
+ * render ulang untuk sesuatu yang tidak terlihat.
+ */
+const stash = new Map<string, Message[]>();
+
+/**
+ * Percakapan yang jendelanya SEDANG diminta. Penampungan sudah harus berlaku
+ * sejak permintaan berangkat: pesan yang datang di antaranya akan ditempel ke
+ * riwayat lama, lalu hilang tertimpa jendela begitu jawabannya tiba.
+ */
+const windowing = new Set<string>();
+
+/** Menggabungkan tampungan ke daftar, lalu mengosongkannya. */
+function drainStash(id: string, list: Message[]): Message[] {
+  const held = stash.get(id) ?? [];
+  stash.delete(id);
+  return held.reduce(upsert, list);
+}
+
+const isPinNotice = (m: Message) =>
+  m.kind === 'system' &&
+  (m.systemEvent?.type === 'message.pinned' || m.systemEvent?.type === 'message.unpinned');
+
 /** Menyisipkan atau memperbarui pesan sambil menjaga urutan seq. */
 function upsert(list: Message[], m: Message): Message[] {
   const idx = list.findIndex(x => x.id === m.id);
   if (idx >= 0) {
     const next = list.slice();
-    next[idx] = m;
+    next[idx] = keepReactions(list[idx]!, m);
     return next;
   }
   const next = list.slice();
@@ -186,6 +260,20 @@ function upsert(list: Message[], m: Message): Message[] {
   while (i > 0 && next[i - 1]!.seq > m.seq) i--;
   next.splice(i, 0, m);
   return next;
+}
+
+/**
+ * Pesan yang sama datang lagi — hasil edit, atau kiriman ulang dari server.
+ *
+ * Siaran edit adalah SATU payload untuk semua orang, jadi dia tidak pernah
+ * membawa ringkasan reaksi (yang memuat "apakah aku ikut"): larik reaksinya
+ * selalu kosong. Menimpanya apa adanya membuat setiap pesan yang disunting
+ * kehilangan semua reaksinya di layar sampai halamannya dimuat ulang. Yang
+ * dihapus memang kehilangan reaksinya — server membuangnya bersama isinya.
+ */
+function keepReactions(old: Message, m: Message): Message {
+  if (m.deletedAt || m.reactions.length > 0 || old.reactions.length === 0) return m;
+  return { ...m, reactions: old.reactions, reactionSeq: Math.max(old.reactionSeq, m.reactionSeq) };
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -198,7 +286,10 @@ export const useStore = create<State>((set, get) => ({
   pending: {},
   uploads: {},
   hasMore: {},
+  hasNewer: {},
   members: {},
+  pins: {},
+  jumpTarget: null,
   online: new Set(),
   statuses: {},
   typing: {},
@@ -231,6 +322,7 @@ export const useStore = create<State>((set, get) => ({
         for (const u of list) if (u.previewUrl) URL.revokeObjectURL(u.previewUrl);
       }
       files.clear();
+      stash.clear();
       // `config` sengaja tidak ikut dibuang: dia menggambarkan SERVER-nya,
       // bukan orang yang barusan keluar. Membuangnya berarti halaman masuk
       // kehilangan jawaban "apakah pemulihan password tersedia" tepat setelah
@@ -243,7 +335,10 @@ export const useStore = create<State>((set, get) => ({
         pending: {},
         uploads: {},
         hasMore: {},
+        hasNewer: {},
         members: {},
+        pins: {},
+        jumpTarget: null,
         online: new Set(),
         statuses: {},
         typing: {},
@@ -332,6 +427,12 @@ export const useStore = create<State>((set, get) => ({
         : null,
     ]);
 
+    // Sematan dibaca ulang SETIAP kali percakapan dibuka, bukan sekali saja.
+    // Daftarnya pendek dan kuerinya murah, dan ini satu-satunya cara yang
+    // pasti menangkap sematan yang ikut lepas karena pesannya dihapus selagi
+    // kita offline — penghapusan itu tidak meninggalkan catatan sistem.
+    void get().loadPins(id);
+
     get().markReadUpTo(id);
   },
 
@@ -358,10 +459,144 @@ export const useStore = create<State>((set, get) => ({
     }));
   },
 
+  loadNewer: async id => {
+    const list = get().messages[id] ?? [];
+    const newest = list[list.length - 1]?.seq;
+    if (!newest || !get().hasNewer[id]) return;
+
+    const page = await api.messagesAfter(id, newest);
+    set(s => {
+      const merged = page.messages.reduce(upsert, s.messages[id] ?? []);
+      return {
+        // Jendela yang baru saja menyambung ke ujung menerima tampungannya:
+        // pesan yang datang selagi jendelanya belum sampai ke sana.
+        messages: { ...s.messages, [id]: page.hasNewer ? merged : drainStash(id, merged) },
+        hasNewer: { ...s.hasNewer, [id]: page.hasNewer },
+      };
+    });
+    if (!page.hasNewer) get().markReadUpTo(id);
+  },
+
+  returnToLatest: async id => {
+    const page = await api.messages(id);
+    set(s => ({
+      messages: { ...s.messages, [id]: drainStash(id, page.messages) },
+      hasMore: { ...s.hasMore, [id]: page.hasMore },
+      hasNewer: { ...s.hasNewer, [id]: false },
+    }));
+    get().markReadUpTo(id);
+  },
+
+  /**
+   * Melompat ke sebuah pesan.
+   *
+   * Tiga kemungkinan, dari yang termurah: pesannya sudah termuat; pesannya
+   * dekat di belakang, jadi halaman lama ditarik satu per satu dan riwayatnya
+   * tetap utuh; atau pesannya jauh, dan yang dimuat adalah JENDELA di
+   * sekitarnya. Yang terakhir menggantikan riwayat yang sedang tampil — dan
+   * `hasNewer` yang mengingat bahwa ujung terbarunya belum termuat.
+   *
+   * `seq` yang membuat jendela bisa diminta. Kutipan, sematan, catatan sistem,
+   * dan hasil pencarian semuanya membawanya, justru untuk keperluan ini.
+   */
+  jumpTo: async (conversationId, messageId, seq) => {
+    if (get().activeId !== conversationId) await get().openConversation(conversationId);
+
+    const loaded = () => (get().messages[conversationId] ?? []).some(m => m.id === messageId);
+
+    if (!loaded() && get().hasMore[conversationId] !== false) {
+      const oldest = get().messages[conversationId]?.[0]?.seq;
+      const near = seq !== undefined && oldest !== undefined && oldest - seq <= JUMP_NEAR;
+      if (near || seq === undefined) {
+        for (let page = 0; page < 4 && !loaded() && get().hasMore[conversationId]; page++) {
+          await get().loadOlder(conversationId);
+        }
+      }
+    }
+
+    if (!loaded() && seq !== undefined) {
+      windowing.add(conversationId);
+      try {
+        const win = await api.messagesAround(conversationId, seq);
+        set(s => ({
+          messages: {
+            ...s.messages,
+            [conversationId]: win.hasNewer
+              ? win.messages
+              : drainStash(conversationId, win.messages),
+          },
+          hasMore: { ...s.hasMore, [conversationId]: win.hasMore },
+          hasNewer: { ...s.hasNewer, [conversationId]: win.hasNewer },
+        }));
+      } finally {
+        windowing.delete(conversationId);
+      }
+    }
+
+    if (!loaded()) return false;
+    set({ jumpTarget: { conversationId, messageId, nonce: Date.now() } });
+    return true;
+  },
+
+  loadPins: async conversationId => {
+    try {
+      const pins = await api.pins(conversationId);
+      set(s => ({ pins: { ...s.pins, [conversationId]: pins } }));
+    } catch {
+      // Daftar sematan yang gagal dimuat tidak layak jadi pesan kesalahan:
+      // percakapannya tetap bisa dipakai sepenuhnya tanpa dia.
+    }
+  },
+
+  /**
+   * Menyematkan atau melepas.
+   *
+   * Tidak optimistik. Sematan adalah tindakan yang dilihat SEMUA anggota dan
+   * meninggalkan catatan di riwayat mereka; menampilkannya sebelum server
+   * setuju berarti menampilkan sesuatu yang mungkin ditolak karena batas
+   * jumlahnya.
+   */
+  setPinned: async (message, pinned) => {
+    const res = pinned ? await api.pin(message.id) : await api.unpin(message.id);
+    if (res.notice) get().applyMessage(res.notice);
+    await get().loadPins(message.conversationId);
+  },
+
+  /**
+   * Meneruskan satu pesan ke beberapa percakapan.
+   *
+   * Satu pengiriman per tujuan, BERURUTAN, bukan serentak: kuota terusan di
+   * server dihitung per orang, dan lima permintaan yang tiba bersamaan
+   * berlomba memakai token yang sama. Yang gagal dilaporkan per tujuan —
+   * satu grup yang menolak tidak boleh membuat empat yang berhasil terlihat
+   * gagal.
+   */
+  forwardMessage: async (messageId, targets) => {
+    const out: ForwardOutcome[] = [];
+    for (const conversationId of targets.slice(0, MAX_FORWARD_TARGETS)) {
+      try {
+        get().applyMessage(await api.forwardMessage(conversationId, uuidv7(), messageId));
+        out.push({ conversationId, ok: true });
+      } catch (err) {
+        out.push({
+          conversationId,
+          ok: false,
+          error: err instanceof ApiError ? err.message : 'Gagal terkirim',
+        });
+      }
+    }
+    return out;
+  },
+
   // Alur kirim optimistik: pesan langsung muncul dengan id final buatan client,
   // lalu dikonfirmasi (atau ditandai gagal) setelah server menjawab. Karena id
   // sudah final, percobaan ulang tidak akan menghasilkan pesan ganda.
   sendMessage: async (conversationId, body) => {
+    // Menulis saat sedang membaca jendela lama: kembali ke ujung dulu. Pesan
+    // yang dikirim dari sana harus terlihat mendarat di tempatnya, bukan
+    // menghilang ke tampungan di bawah jendela yang sedang dibaca.
+    if (get().hasNewer[conversationId]) await get().returnToLatest(conversationId);
+
     // Hanya unggahan yang SUDAH selesai yang ikut. Yang masih berjalan
     // ditinggal di laci dan tetap bisa dikirim pada pesan berikutnya — lebih
     // baik daripada menahan pesan yang sudah diketik karena satu berkas besar
@@ -607,9 +842,43 @@ export const useStore = create<State>((set, get) => ({
     get().applyMessage(await api.deleteMessage(id));
   },
 
-  applyMessage: m =>
+  applyMessage: m => {
+    const current = get().messages[m.conversationId] ?? [];
+    const known = current.some(x => x.id === m.id);
+
+    // Catatan sematan yang BARU adalah tanda untuk membaca ulang daftar
+    // sematan — satu-satunya kabar yang dikirim server tentang itu, dan dia
+    // juga yang sampai lewat susulan setelah reconnect. Yang sudah pernah
+    // diterapkan tidak memicu apa-apa: kabar yang sama datang lewat jawaban
+    // HTTP dan lewat siaran.
+    if (!known && isPinNotice(m) && get().pins[m.conversationId] !== undefined) {
+      void get().loadPins(m.conversationId);
+    }
+
     set(s => {
-      const list = upsert(s.messages[m.conversationId] ?? [], m);
+      // Sedang membaca jendela lama: pesan BARU ditampung, bukan ditempel.
+      // Pesan yang sudah ada di jendela — suntingan, penghapusan — tetap
+      // diterapkan di tempatnya.
+      const windowed = (s.hasNewer[m.conversationId] || windowing.has(m.conversationId)) && !known;
+      if (windowed) {
+        stash.set(m.conversationId, upsert(stash.get(m.conversationId) ?? [], m));
+      }
+      const list = windowed ? current : upsert(s.messages[m.conversationId] ?? [], m);
+
+      // Sematan mengikuti pesannya: yang dihapus pergi dari daftar, yang
+      // disunting tampil versi barunya.
+      const pinned = s.pins[m.conversationId];
+      const pins =
+        pinned && pinned.some(p => p.message.id === m.id)
+          ? {
+              ...s.pins,
+              [m.conversationId]: m.deletedAt
+                ? pinned.filter(p => p.message.id !== m.id)
+                : pinned.map(p =>
+                    p.message.id === m.id ? { ...p, message: keepReactions(p.message, m) } : p,
+                  ),
+            }
+          : s.pins;
 
       // Penanda sebutan dinaikkan di sini juga, bukan hanya di database.
       //
@@ -648,8 +917,10 @@ export const useStore = create<State>((set, get) => ({
           [m.conversationId]: (s.pending[m.conversationId] ?? []).filter(p => p.id !== m.id),
         },
         conversations,
+        pins,
       };
-    }),
+    });
+  },
 
   applyReaction: (conversationId, messageId, userId, emoji, added, reactionSeq) =>
     set(s => {
@@ -734,6 +1005,7 @@ export const useStore = create<State>((set, get) => ({
       // Semua yang menempel pada percakapan ini ikut dibuang. Menyisakan
       // riwayatnya di memori berarti percakapan yang sudah bukan milik kita
       // tetap bisa muncul kembali begitu ada satu event yang menyebut id-nya.
+      stash.delete(conversationId);
       const drop = <T,>(rec: Record<string, T>) => {
         const next = { ...rec };
         delete next[conversationId];
@@ -746,7 +1018,9 @@ export const useStore = create<State>((set, get) => ({
         pending: drop(s.pending),
         uploads: drop(s.uploads),
         hasMore: drop(s.hasMore),
+        hasNewer: drop(s.hasNewer),
         members: drop(s.members),
+        pins: drop(s.pins),
         typing: drop(s.typing),
         replyTo: drop(s.replyTo),
         mentionDraft: drop(s.mentionDraft),
@@ -865,9 +1139,14 @@ export const useStore = create<State>((set, get) => ({
     })),
 
   syncCursors: () => {
-    const { messages } = get();
+    const { messages, hasNewer } = get();
     const cursors: Record<string, number> = {};
     for (const [id, list] of Object.entries(messages)) {
+      // Jendela lama tidak ikut menyusul. Cursor-nya adalah ujung JENDELA,
+      // dan susulan dari sana akan menumpahkan dua ratus pesan lama ke
+      // tampungan; yang terlewat toh dimuat ulang begitu jendelanya kembali ke
+      // ujung.
+      if (hasNewer[id]) continue;
       cursors[id] = list.length ? list[list.length - 1]!.seq : 0;
     }
     return cursors;
@@ -884,6 +1163,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   markReadUpTo: conversationId => {
+    // Membaca jendela lama bukan membaca yang terbaru.
+    if (get().hasNewer[conversationId]) return;
     const list = get().messages[conversationId] ?? [];
     const last = list[list.length - 1];
     const conv = get().conversations.find(c => c.id === conversationId);

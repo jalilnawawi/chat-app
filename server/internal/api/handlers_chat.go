@@ -125,6 +125,36 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		limit = min(v, maxPageSize)
 	}
 
+	// Dua bentuk tambahan untuk melompat ke pesan jauh di belakang riwayat:
+	// `around` memuat jendela yang memuat sebuah seq, `after` melanjutkannya ke
+	// arah yang lebih baru. Keduanya menjawab `hasNewer`, karena jendela seperti
+	// itu memang belum tentu menyentuh ujung terbaru.
+	if around, err := strconv.ParseInt(q.Get("around"), 10, 64); err == nil && around > 0 {
+		win, err := s.store.MessagesAround(r.Context(), convID, me.ID, around, limit)
+		if err != nil {
+			s.writeStoreError(w, err, "jendela riwayat")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"messages": win.Messages,
+			"hasMore":  win.HasOlder,
+			"hasNewer": win.HasNewer,
+		})
+		return
+	}
+	if after, err := strconv.ParseInt(q.Get("after"), 10, 64); err == nil && after > 0 {
+		messages, err := s.store.MessagesSince(r.Context(), convID, me.ID, after, limit)
+		if err != nil {
+			s.writeStoreError(w, err, "riwayat lanjutan")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"messages": messages,
+			"hasNewer": len(messages) == limit,
+		})
+		return
+	}
+
 	// Pembaca ikut disebut karena ringkasan reaksi memuat "apakah aku ikut" —
 	// satu-satunya bagian sebuah pesan yang jawabannya berbeda per orang.
 	messages, err := s.store.ListMessages(r.Context(), convID, me.ID, before, limit)
@@ -176,6 +206,12 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		// berhenti memanggilnya.
 		MentionedUserIDs []uuid.UUID `json:"mentionedUserIds"`
 		MentionsAll      bool        `json:"mentionsAll"`
+
+		// ForwardFromID menunjuk pesan yang diteruskan. Meneruskan adalah
+		// mengirim pesan — lewat jalur ini, dengan id dari client, kuota, dan
+		// siarannya — yang isinya disalin server dari pesan itu. Lihat
+		// store/forward.go.
+		ForwardFromID *uuid.UUID `json:"forwardFromId"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "body tidak valid")
@@ -184,6 +220,25 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 
 	if req.ID == uuid.Nil {
 		writeError(w, http.StatusBadRequest, "id pesan wajib diisi client")
+		return
+	}
+
+	if req.ForwardFromID != nil {
+		// Pesan terusan adalah ucapan utuh orang lain. Komentar, lampiran
+		// tambahan, kutipan, dan sebutan atasnya adalah pesan BERIKUTNYA —
+		// mencampurnya ke sini menghasilkan gelembung berlabel "diteruskan"
+		// yang sebagian isinya justru ditulis pengirimnya sendiri.
+		if strings.TrimSpace(req.Body) != "" || len(req.AttachmentIDs) > 0 ||
+			req.ReplyToID != nil || len(req.MentionedUserIDs) > 0 || req.MentionsAll {
+			writeError(w, http.StatusBadRequest, "pesan terusan tidak bisa ditambahi isi")
+			return
+		}
+		if !s.allow(w, r, "forward", "forward:"+me.ID.String(), s.cfg.ForwardRate) {
+			return
+		}
+		s.sendAndPublish(w, r, me.User, store.SendParams{
+			ID: req.ID, ConversationID: convID, SenderID: me.ID, ForwardFromID: req.ForwardFromID,
+		})
 		return
 	}
 
@@ -231,7 +286,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	msg, created, err := s.store.SendMessage(r.Context(), store.SendParams{
+	s.sendAndPublish(w, r, me.User, store.SendParams{
 		ID:             req.ID,
 		ConversationID: convID,
 		SenderID:       me.ID,
@@ -241,6 +296,15 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		Mentions:       req.MentionedUserIDs,
 		MentionsAll:    req.MentionsAll,
 	})
+}
+
+// sendAndPublish menyimpan pesan, menyiarkannya, membangunkan yang offline,
+// lalu menjawab. Satu jalur untuk pesan biasa dan pesan terusan: keduanya
+// sama-sama pesan, dan dua salinan bagian ini adalah dua tempat yang suatu
+// hari lupa salah satu langkahnya.
+func (s *Server) sendAndPublish(w http.ResponseWriter, r *http.Request, me store.User, p store.SendParams) {
+	convID := p.ConversationID
+	msg, created, err := s.store.SendMessage(r.Context(), p)
 	if err != nil {
 		s.writeStoreError(w, err, "send message")
 		return
@@ -260,7 +324,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 			s.log.Error("ambil anggota untuk siaran", "conversation", convID, "err", err)
 		} else {
 			s.hub.Publish(members, hub.Event{Type: hub.EventMessageNew, Payload: msg})
-			s.notifyOffline(r, msg, me.User, members)
+			s.notifyOffline(r, msg, me, members)
 		}
 	}
 	writeJSON(w, http.StatusCreated, msg)

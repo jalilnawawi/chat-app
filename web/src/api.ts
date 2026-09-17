@@ -4,6 +4,8 @@ import type {
   Me,
   Member,
   Message,
+  Pin,
+  SearchResult,
   ServerConfig,
   Session,
   StatusKind,
@@ -208,6 +210,57 @@ export const api = {
       `/api/conversations/${conversationId}/messages?before=${before}&limit=${limit}`,
     ),
 
+  /**
+   * Jendela riwayat yang MEMUAT pesan `seq`, untuk melompat ke pesan yang jauh
+   * di belakang. Jendelanya belum tentu menyentuh ujung terbaru — `hasNewer`
+   * yang mengatakannya.
+   */
+  messagesAround: (conversationId: string, seq: number, limit = 50) =>
+    request<{ messages: Message[]; hasMore: boolean; hasNewer: boolean }>(
+      `/api/conversations/${conversationId}/messages?around=${seq}&limit=${limit}`,
+    ),
+
+  /** Lanjutan jendela ke arah yang lebih baru. */
+  messagesAfter: (conversationId: string, after: number, limit = 50) =>
+    request<{ messages: Message[]; hasNewer: boolean }>(
+      `/api/conversations/${conversationId}/messages?after=${after}&limit=${limit}`,
+    ),
+
+  /**
+   * Mencari isi pesan. Tanpa `conversationId` berarti di semua percakapan.
+   *
+   * Server mencocokkan kata utuh dan AWALANNYA (untuk kata tiga huruf ke
+   * atas): "kirim" menemukan "kirimkan", tapi tidak "dikirim".
+   */
+  search: (q: string, opts: { conversationId?: string; cursor?: string } = {}) => {
+    const params = new URLSearchParams({ q });
+    if (opts.conversationId) params.set('conversationId', opts.conversationId);
+    if (opts.cursor) params.set('cursor', opts.cursor);
+    return request<SearchResult>(`/api/search?${params}`);
+  },
+
+  pins: (conversationId: string) => request<Pin[]>(`/api/conversations/${conversationId}/pins`),
+
+  pin: (messageId: string) =>
+    request<PinResult>(`/api/messages/${messageId}/pin`, { method: 'PUT' }),
+
+  unpin: (messageId: string) =>
+    request<PinResult>(`/api/messages/${messageId}/pin`, { method: 'DELETE' }),
+
+  /**
+   * Meneruskan satu pesan ke satu percakapan.
+   *
+   * Meneruskan adalah MENGIRIM PESAN — jalur yang sama, id dari client yang
+   * sama — yang isinya disalin server. Meneruskan ke lima percakapan adalah
+   * lima panggilan ini, dan satu yang gagal tidak membatalkan yang lain.
+   */
+  forwardMessage: (conversationId: string, id: string, fromMessageId: string) =>
+    post<Message>(`/api/conversations/${conversationId}/messages`, {
+      id,
+      body: '',
+      forwardFromId: fromMessageId,
+    }),
+
   /** id dibuat di client supaya pengiriman ulang tidak menghasilkan duplikat. */
   sendMessage: (conversationId: string, id: string, body: string, extras: SendExtras = {}) =>
     post<Message>(`/api/conversations/${conversationId}/messages`, {
@@ -361,6 +414,15 @@ export type GroupState = {
   conversationId: string;
   title: string;
   members: Member[];
+};
+
+/** Jawaban atas menyematkan atau melepas. `changed: false` = memang sudah begitu. */
+export type PinResult = {
+  conversationId: string;
+  messageId: string;
+  pinned: boolean;
+  changed: boolean;
+  notice?: Message;
 };
 
 export type ReactionResult = {

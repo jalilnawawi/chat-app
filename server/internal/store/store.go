@@ -421,12 +421,13 @@ func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conv
 		       cm.mention_seq, cm.mention_ack_seq,
 		       lm.id, lm.seq, lm.sender_id, lm.body, lm.attachments,
 		       lm.created_at, lm.edited_at, lm.deleted_at, lm.kind, lm.system_event,
+		       lm.forwarded,
 		       `+userRefs("peer")+`
 		FROM conversation_members cm
 		JOIN conversations c ON c.id = cm.conversation_id
 		LEFT JOIN LATERAL (
 			SELECT id, seq, sender_id, body, attachments, created_at, edited_at,
-			       deleted_at, kind, system_event
+			       deleted_at, kind, system_event, forwarded
 			FROM messages WHERE conversation_id = c.id
 			ORDER BY seq DESC LIMIT 1
 		) lm ON true
@@ -459,13 +460,14 @@ func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conv
 			msgDel  *time.Time
 			msgKind *string
 			msgSys  *SystemEvent
+			msgFwd  *bool
 			peer    peerScan
 		)
 		dest := append([]any{
 			&c.ID, &c.Type, &c.Title, &c.LastSeq, &c.LastReadSeq, &created,
 			&c.MentionSeq, &c.MentionAckSeq,
 			&msgID, &msgSeq, &msgFrom, &msgBody, &msgAtt, &msgAt, &msgEdit, &msgDel,
-			&msgKind, &msgSys,
+			&msgKind, &msgSys, &msgFwd,
 		}, peer.dest()...)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
@@ -485,6 +487,7 @@ func (s *Store) ListConversations(ctx context.Context, userID uuid.UUID) ([]Conv
 				CreatedAt: *msgAt, EditedAt: msgEdit, DeletedAt: msgDel,
 				Mentions: []uuid.UUID{}, Reactions: []ReactionSummary{},
 				Kind: deref(msgKind, "user"), SystemEvent: msgSys,
+				Forwarded: msgFwd != nil && *msgFwd,
 			}
 			c.UpdatedAt = *msgAt
 		}
@@ -601,7 +604,7 @@ func (s *Store) ConversationsOf(ctx context.Context, userID uuid.UUID) ([]uuid.U
 func messageCols(alias string) string {
 	return prefix(alias, "id", "conversation_id", "seq", "sender_id", "body",
 		"attachments", "created_at", "edited_at", "deleted_at",
-		"mentions", "mentions_all", "reaction_seq", "kind", "system_event")
+		"mentions", "mentions_all", "reaction_seq", "kind", "system_event", "forwarded")
 }
 
 // replyCols adalah kolom pesan YANG DIBALAS, dibaca lewat self-join.
@@ -639,6 +642,23 @@ func messageSelect(where string) string {
 
 // scanMessage menerima pgx.Row maupun pgx.Rows — keduanya punya Scan yang sama.
 func scanMessage(row pgx.Row, m *Message) error {
+	dest, finish := messageDest(m)
+	if err := row.Scan(dest...); err != nil {
+		return err
+	}
+	finish()
+	return nil
+}
+
+// messageDest memasangkan tujuan Scan dengan messageCols + replyCols, dan
+// mengembalikan langkah penyelesaiannya terpisah.
+//
+// Dipisahkan dari scanMessage sejak Fase 12 karena dua pembaca baru — hasil
+// pencarian dan daftar sematan — membaca pesan yang SAMA ditambah beberapa
+// kolom miliknya sendiri. Tanpa pemisahan ini keduanya harus menulis ulang
+// daftar tujuan Scan, dan dua daftar yang harus tetap sama urutannya adalah
+// persis yang dicegah messageCols sejak Fase 7.
+func messageDest(m *Message) ([]any, func()) {
 	var (
 		repID      *uuid.UUID
 		repSeq     *int64
@@ -647,31 +667,31 @@ func scanMessage(row pgx.Row, m *Message) error {
 		repAtts    []Attachment
 		repDeleted *time.Time
 	)
-	if err := row.Scan(&m.ID, &m.ConversationID, &m.Seq, &m.SenderID, &m.Body,
+	dest := []any{&m.ID, &m.ConversationID, &m.Seq, &m.SenderID, &m.Body,
 		&m.Attachments, &m.CreatedAt, &m.EditedAt, &m.DeletedAt,
-		&m.Mentions, &m.MentionsAll, &m.ReactionSeq, &m.Kind, &m.SystemEvent,
+		&m.Mentions, &m.MentionsAll, &m.ReactionSeq, &m.Kind, &m.SystemEvent, &m.Forwarded,
 		&repID, &repSeq, &repSender, &repBody, &repAtts, &repDeleted,
-	); err != nil {
-		return err
 	}
 
-	if m.Mentions == nil {
-		m.Mentions = []uuid.UUID{}
-	}
-	// Reaksi diisi terpisah oleh pemanggil yang tahu siapa pembacanya; yang
-	// tidak tahu tetap mengirim larik kosong, bukan null.
-	m.Reactions = []ReactionSummary{}
+	finish := func() {
+		if m.Mentions == nil {
+			m.Mentions = []uuid.UUID{}
+		}
+		// Reaksi diisi terpisah oleh pemanggil yang tahu siapa pembacanya; yang
+		// tidak tahu tetap mengirim larik kosong, bukan null.
+		m.Reactions = []ReactionSummary{}
 
-	if repID != nil {
-		m.ReplyTo = &ReplyPreview{
-			ID: *repID, Seq: *repSeq, SenderID: *repSender,
-			Body: *repBody, Deleted: repDeleted != nil,
-		}
-		if !m.ReplyTo.Deleted && m.ReplyTo.Body == "" {
-			m.ReplyTo.Kind = attachmentKind(repAtts)
+		if repID != nil {
+			m.ReplyTo = &ReplyPreview{
+				ID: *repID, Seq: *repSeq, SenderID: *repSender,
+				Body: *repBody, Deleted: repDeleted != nil,
+			}
+			if !m.ReplyTo.Deleted && m.ReplyTo.Body == "" {
+				m.ReplyTo.Kind = attachmentKind(repAtts)
+			}
 		}
 	}
-	return nil
+	return dest, finish
 }
 
 // attachmentKind memberi satu kata untuk pesan yang isinya hanya lampiran.
@@ -717,6 +737,13 @@ type SendParams struct {
 	// keanggotaannya di dalam transaksi ini.
 	Mentions    []uuid.UUID
 	MentionsAll bool
+
+	// ForwardFromID nil berarti pesan biasa. Bila diisi, isi dan lampiran
+	// pesannya DISALIN dari pesan itu, dan Body, AttachmentIDs, ReplyToID,
+	// serta sebutan wajib kosong — pesan yang diteruskan adalah ucapan utuh
+	// orang lain, dan komentar atasnya adalah pesan berikutnya. Pengirim WAJIB
+	// bisa membaca pesan sumbernya; lihat forwardSource.
+	ForwardFromID *uuid.UUID
 }
 
 // SendMessage menyisipkan pesan dan mengalokasikan `seq` berikutnya.
@@ -740,6 +767,31 @@ func (s *Store) SendMessage(ctx context.Context, p SendParams) (Message, bool, e
 		return Message{}, false, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Pesan yang diteruskan dikunci LEBIH DULU, sebelum percakapan tujuan.
+	//
+	// Urutannya bukan kebetulan. DeleteMessage memegang baris pesan lalu
+	// meminta baris percakapannya (lewat jam reaksi); meneruskan pesan di
+	// percakapan yang sama dengan urutan sebaliknya adalah dua transaksi yang
+	// saling menunggu selamanya. Satu aturan untuk semua jalur: pesan dulu,
+	// percakapan kemudian. Lihat juga store/pins.go.
+	//
+	// Pengiriman ulang yang pesannya SUDAH tersimpan tidak menyentuh sumbernya
+	// sama sekali: sumber yang dihapus sesudahnya tidak boleh membuat retry
+	// yang sah dijawab "tidak diizinkan".
+	var source *forwarded
+	if p.ForwardFromID != nil {
+		var exists bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM messages WHERE id = $1)`, p.ID).Scan(&exists); err != nil {
+			return Message{}, false, fmt.Errorf("periksa duplikat: %w", err)
+		}
+		if !exists {
+			if source, err = forwardSource(ctx, tx, *p.ForwardFromID, senderID); err != nil {
+				return Message{}, false, err
+			}
+		}
+	}
 
 	var (
 		lastSeq  int64
@@ -799,18 +851,29 @@ func (s *Store) SendMessage(ctx context.Context, p SendParams) (Message, bool, e
 		return Message{}, false, err
 	}
 
+	body := p.Body
+	if p.ForwardFromID != nil {
+		if source == nil {
+			// Pemeriksaan di atas melihat pesannya sudah ada, tapi pemeriksaan
+			// di bawah kunci tidak menemukannya — tidak mungkin terjadi,
+			// karena pesan tidak pernah dihapus keras.
+			return Message{}, false, fmt.Errorf("pesan terusan hilang di tengah transaksi")
+		}
+		body = source.body
+	}
+
 	seq := lastSeq + 1
 	m := Message{
 		ID: p.ID, ConversationID: convID, Seq: seq, SenderID: senderID,
-		Body: p.Body, Attachments: []Attachment{},
+		Body: body, Attachments: []Attachment{},
 		ReplyTo: replyTo, Mentions: mentions, MentionsAll: mentionsAll,
-		Reactions: []ReactionSummary{}, Kind: "user",
+		Reactions: []ReactionSummary{}, Kind: "user", Forwarded: source != nil,
 	}
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO messages (id, conversation_id, seq, sender_id, body,
-		                      reply_to_id, mentions, mentions_all)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING created_at`,
-		p.ID, convID, seq, senderID, p.Body, p.ReplyToID, mentions, mentionsAll,
+		                      reply_to_id, mentions, mentions_all, forwarded)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING created_at`,
+		p.ID, convID, seq, senderID, body, p.ReplyToID, mentions, mentionsAll, m.Forwarded,
 	).Scan(&m.CreatedAt); err != nil {
 		return Message{}, false, fmt.Errorf("insert message: %w", err)
 	}
@@ -822,7 +885,12 @@ func (s *Store) SendMessage(ctx context.Context, p SendParams) (Message, bool, e
 	// Lampiran dipasang setelah baris pesan ada — foreign key-nya menuntut itu —
 	// lalu hasilnya disalin ke kolom jsonb milik pesan. Salinan itu yang dibaca
 	// saat menampilkan riwayat, sehingga memuat seratus pesan tetap satu query.
-	if m.Attachments, err = claimAttachments(ctx, tx, p.ID, senderID, p.AttachmentIDs); err != nil {
+	if source != nil {
+		m.Attachments, err = copyAttachments(ctx, tx, source, p.ID, senderID)
+	} else {
+		m.Attachments, err = claimAttachments(ctx, tx, p.ID, senderID, p.AttachmentIDs)
+	}
+	if err != nil {
 		return Message{}, false, err
 	}
 	if len(m.Attachments) > 0 {
@@ -1009,6 +1077,74 @@ func (s *Store) ListMessages(ctx context.Context, convID, viewerID uuid.UUID, be
 	return out, nil
 }
 
+// Window adalah sepotong riwayat yang tidak harus menyentuh ujung terbarunya.
+type Window struct {
+	Messages []Message
+	// HasOlder dan HasNewer: apakah masih ada pesan di luar kedua tepinya.
+	HasOlder bool
+	HasNewer bool
+}
+
+// MessagesAround mengambil sepotong riwayat yang MEMUAT pesan `seq`, untuk
+// melompat ke pesan yang jauh di belakang: hasil pencarian, sematan, kutipan
+// tua.
+//
+// Riwayat biasa dimuat dari yang terbaru ke belakang, sehalaman demi
+// sehalaman. Pesan setahun lalu di grup yang ramai berjarak ribuan pesan dari
+// sana, dan menarik semua halaman di antaranya hanya untuk menampilkan satu
+// adalah cara membuat lompatan yang tidak pernah sampai.
+//
+// Yang membuat ini murah adalah janji dari 0001: `seq` tanpa lompatan. Jendela
+// di sekitar sebuah pesan bisa DIHITUNG — seq-seq di sekitarnya pasti ada —
+// jadi tidak butuh dua kueri ke dua arah, cukup satu BETWEEN pada index yang
+// sudah ada.
+func (s *Store) MessagesAround(ctx context.Context, convID, viewerID uuid.UUID, seq int64, limit int) (Window, error) {
+	var last int64
+	if err := s.pool.QueryRow(ctx,
+		`SELECT last_seq FROM conversations WHERE id = $1`, convID).Scan(&last); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Window{}, ErrNotFound
+		}
+		return Window{}, fmt.Errorf("baca ujung riwayat: %w", err)
+	}
+
+	// Pesan yang dicari berada kira-kira di tengah. Jendela yang menabrak
+	// ujung terbaru digeser ke belakang supaya tetap penuh, bukan dipotong —
+	// melompat ke pesan kemarin tidak boleh menghasilkan jendela berisi tiga.
+	seq = min(max(seq, 1), max(last, 1))
+	lo := max(seq-int64(limit/2), 1)
+	hi := lo + int64(limit) - 1
+	if hi > last {
+		hi = last
+		lo = max(hi-int64(limit)+1, 1)
+	}
+
+	rows, err := s.pool.Query(ctx,
+		messageSelect(`m.conversation_id = $1 AND m.seq BETWEEN $2 AND $3`)+` ORDER BY m.seq`,
+		convID, lo, hi)
+	if err != nil {
+		return Window{}, fmt.Errorf("jendela riwayat: %w", err)
+	}
+	defer rows.Close()
+
+	w := Window{Messages: []Message{}, HasOlder: lo > 1, HasNewer: hi < last}
+	for rows.Next() {
+		var m Message
+		if err := scanMessage(rows, &m); err != nil {
+			return Window{}, err
+		}
+		w.Messages = append(w.Messages, m)
+	}
+	if err := rows.Err(); err != nil {
+		return Window{}, err
+	}
+
+	if err := s.attachReactions(ctx, w.Messages, viewerID); err != nil {
+		return Window{}, err
+	}
+	return w, nil
+}
+
 // MessagesSince dipakai saat client reconnect: kirim semua yang terlewat.
 func (s *Store) MessagesSince(ctx context.Context, convID, viewerID uuid.UUID, afterSeq int64, limit int) ([]Message, error) {
 	rows, err := s.pool.Query(ctx,
@@ -1110,6 +1246,15 @@ func (s *Store) DeleteMessage(ctx context.Context, id, senderID uuid.UUID) (Mess
 		return Message{}, err
 	}
 	m.Reactions = []ReactionSummary{}
+
+	// Sematannya ikut lepas, tanpa catatan sistem: penghapusannya sendiri
+	// sudah terlihat di riwayat, dan "Budi melepas sematan" di bawah "pesan
+	// ini dihapus" adalah dua baris untuk satu kejadian. Client yang sedang
+	// terhubung membuang sematannya saat menerima pesan yang terhapus ini;
+	// yang sedang offline membaca ulang daftarnya saat membuka percakapan.
+	if _, err := tx.Exec(ctx, `DELETE FROM pinned_messages WHERE message_id = $1`, id); err != nil {
+		return Message{}, fmt.Errorf("lepas sematan pesan: %w", err)
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return Message{}, err

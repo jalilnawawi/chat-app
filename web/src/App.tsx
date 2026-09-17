@@ -8,6 +8,7 @@ import AuthPage from './components/AuthPage';
 import Sidebar from './components/Sidebar';
 import ChatPanel from './components/ChatPanel';
 import AccountPanel from './components/AccountPanel';
+import SearchPanel from './components/SearchPanel';
 import Icon from './components/Icon';
 import Tanda from './components/Tanda';
 
@@ -19,6 +20,12 @@ export default function App() {
   const loadConversations = useStore(s => s.loadConversations);
   const [checking, setChecking] = useState(true);
   const [accountOpen, setAccountOpen] = useState(false);
+  /**
+   * Panel pencarian: undefined = tertutup, null = semua percakapan, string =
+   * satu percakapan. Panel akun dan panel pencarian menempati kolom yang sama,
+   * jadi membuka yang satu menutup yang lain.
+   */
+  const [search, setSearch] = useState<string | null | undefined>(undefined);
   /**
    * Hasil membuka tautan verifikasi email.
    *
@@ -154,10 +161,27 @@ export default function App() {
         <Sidebar
           hiddenOnMobile={activeId !== null}
           accountOpen={accountOpen}
-          onToggleAccount={() => setAccountOpen(v => !v)}
+          onToggleAccount={() => {
+            setSearch(undefined);
+            setAccountOpen(v => !v);
+          }}
+          searchOpen={search !== undefined}
+          onSearch={() => {
+            setAccountOpen(false);
+            setSearch(v => (v === undefined ? null : undefined));
+          }}
         />
-        <ChatPanel send={socket.send} />
+        <ChatPanel
+          send={socket.send}
+          onSearch={id => {
+            setAccountOpen(false);
+            setSearch(id);
+          }}
+        />
         {accountOpen && <AccountPanel onClose={() => setAccountOpen(false)} />}
+        {search !== undefined && (
+          <SearchPanel scope={search} onScope={setSearch} onClose={() => setSearch(undefined)} />
+        )}
       </div>
     </div>
   );

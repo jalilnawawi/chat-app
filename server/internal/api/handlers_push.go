@@ -170,6 +170,12 @@ func notificationText(brief store.ConversationBrief, sender store.User, msg stor
 	if body == "" {
 		body = attachmentSummary(msg.Attachments)
 	}
+	// Terusan diberi tanda juga di layar kunci. Tanpa itu, kalimat orang lain
+	// yang diteruskan terbaca sebagai kalimat pengirimnya sendiri — justru di
+	// tempat yang tidak punya ruang untuk penjelasan lain.
+	if msg.Forwarded {
+		body = "Diteruskan: " + body
+	}
 	body = truncate(body, 200)
 
 	if brief.Type == "group" {

@@ -187,7 +187,10 @@ func claimAttachments(ctx context.Context, tx pgx.Tx, messageID, ownerID uuid.UU
 
 // Orphan adalah lampiran yang diunggah tapi tidak pernah jadi dikirim.
 type Orphan struct {
-	ID         uuid.UUID
+	ID uuid.UUID
+	// StorageKey kosong bila byte-nya masih dipakai baris lampiran lain —
+	// salinan dari pesan yang diteruskan. Barisnya tetap terhapus; byte-nya
+	// tidak boleh ikut dibuang.
 	StorageKey string
 	// ThumbKey kosong bila lampiran ini tidak punya turunan. Ikut dibawa
 	// karena penyapu adalah SATU-SATUNYA yang akan pernah menyentuh berkas ini
@@ -205,14 +208,46 @@ type Orphan struct {
 // dan tidak memakan apa pun selain ruang disk. Urutan sebaliknya bisa membuat
 // baris yang isinya sudah hilang tetap tampil sebagai lampiran di layar.
 func (s *Store) TakeOrphanAttachments(ctx context.Context, olderThan time.Duration, limit int) ([]Orphan, error) {
+	// Sejak Fase 12 sebuah kunci penyimpanan bisa ditunjuk LEBIH DARI SATU
+	// baris: lampiran yang diteruskan menyalin barisnya, bukan byte-nya. Jadi
+	// baris yatim tetap dihapus, tapi kuncinya hanya dikembalikan bila tidak
+	// ada baris LAIN yang masih menunjuknya — kalau tidak, menghapus pesan asli
+	// sebuah foto akan merusak setiap salinan terusannya begitu penyapu lewat.
+	//
+	// Pernyataan SELECT di luar CTE melihat tabel SEBELUM penghapusan, jadi
+	// baris yang sedang dihapus dikecualikan dengan tegas. Dua baris yatim yang
+	// berbagi kunci dan terhapus di putaran yang sama sama-sama tidak punya
+	// "baris lain", dan keduanya melaporkan kunci yang sama — penghapusan ganda
+	// di penyimpanan tidak merusak apa pun.
+	//
+	// Kenapa baris yang belum di-commit tidak jadi celah: salinan terusan hanya
+	// bisa dibuat dari baris yang masih TERPASANG ke pesan yang belum dihapus,
+	// dan pesan itu dikunci selama salinannya dibuat (forwardSource). Baris
+	// terpasang itu sendiri sudah di-commit dan terlihat di sini, jadi kuncinya
+	// tidak pernah terlihat sebagai "tidak dipakai siapa pun" selama ada
+	// salinan yang sedang lahir darinya.
 	rows, err := s.pool.Query(ctx, `
-		DELETE FROM attachments
-		WHERE id IN (
-			SELECT id FROM attachments
-			WHERE message_id IS NULL AND created_at < now() - $1::interval
-			ORDER BY created_at LIMIT $2
+		WITH gone AS (
+			DELETE FROM attachments
+			WHERE id IN (
+				SELECT id FROM attachments
+				WHERE message_id IS NULL AND created_at < now() - $1::interval
+				ORDER BY created_at LIMIT $2
+			)
+			RETURNING id, storage_key, thumb_key
 		)
-		RETURNING id, storage_key, thumb_key`, olderThan.String(), limit)
+		SELECT g.id,
+		       CASE WHEN EXISTS (
+		           SELECT 1 FROM attachments o
+		           WHERE o.storage_key = g.storage_key
+		             AND o.id NOT IN (SELECT id FROM gone)
+		       ) THEN NULL ELSE g.storage_key END,
+		       CASE WHEN g.thumb_key IS NULL OR EXISTS (
+		           SELECT 1 FROM attachments o
+		           WHERE o.thumb_key = g.thumb_key
+		             AND o.id NOT IN (SELECT id FROM gone)
+		       ) THEN NULL ELSE g.thumb_key END
+		FROM gone g`, olderThan.String(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("ambil lampiran yatim: %w", err)
 	}
@@ -221,11 +256,15 @@ func (s *Store) TakeOrphanAttachments(ctx context.Context, olderThan time.Durati
 	out := []Orphan{}
 	for rows.Next() {
 		var (
-			o        Orphan
-			thumbKey *string
+			o          Orphan
+			storageKey *string
+			thumbKey   *string
 		)
-		if err := rows.Scan(&o.ID, &o.StorageKey, &thumbKey); err != nil {
+		if err := rows.Scan(&o.ID, &storageKey, &thumbKey); err != nil {
 			return nil, err
+		}
+		if storageKey != nil {
+			o.StorageKey = *storageKey
 		}
 		if thumbKey != nil {
 			o.ThumbKey = *thumbKey

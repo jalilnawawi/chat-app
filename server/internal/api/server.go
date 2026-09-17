@@ -12,6 +12,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -230,6 +231,21 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /api/push/subscribe", s.requireAuth(http.HandlerFunc(s.handlePushSubscribe)))
 	mux.Handle("POST /api/push/unsubscribe", s.requireAuth(http.HandlerFunc(s.handlePushUnsubscribe)))
 
+	// ---- menemukan pesan (Fase 12) ----
+	//
+	// Pencarian punya kuotanya sendiri: dia satu-satunya kueri yang biayanya
+	// sebanding dengan jumlah kecocokan, dan dia dijalankan sambil mengetik.
+	mux.Handle("GET /api/search",
+		s.requireAuth(s.rateLimitByUser("search", s.cfg.SearchRate, http.HandlerFunc(s.handleSearch))))
+	mux.Handle("GET /api/conversations/{id}/pins", s.requireAuth(http.HandlerFunc(s.handleListPins)))
+
+	// Sematan memakai kuota pengelolaan grup, dengan alasan yang sama persis:
+	// tiap tindakan menulis catatan sistem ke riwayat semua anggota.
+	mux.Handle("PUT /api/messages/{id}/pin",
+		s.requireAuth(s.rateLimitByUser("group", s.cfg.GroupRate, http.HandlerFunc(s.handlePin))))
+	mux.Handle("DELETE /api/messages/{id}/pin",
+		s.requireAuth(s.rateLimitByUser("group", s.cfg.GroupRate, http.HandlerFunc(s.handleUnpin))))
+
 	mux.Handle("PATCH /api/messages/{id}", s.requireAuth(http.HandlerFunc(s.handleEditMessage)))
 	mux.Handle("DELETE /api/messages/{id}", s.requireAuth(http.HandlerFunc(s.handleDeleteMessage)))
 
@@ -400,17 +416,36 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 func (s *Server) writeStoreError(w http.ResponseWriter, err error, context string) {
 	switch {
 	case errors.Is(err, store.ErrInvalid):
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, storeDetail(err, store.ErrInvalid, "masukan tidak valid"))
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "tidak ditemukan")
 	case errors.Is(err, store.ErrForbidden):
 		writeError(w, http.StatusForbidden, "tidak diizinkan")
 	case errors.Is(err, store.ErrConflict):
-		writeError(w, http.StatusConflict, "sudah ada atau bentrok")
+		writeError(w, http.StatusConflict, storeDetail(err, store.ErrConflict, "sudah ada atau bentrok"))
 	default:
 		s.log.Error(context, "err", err)
 		writeError(w, http.StatusInternalServerError, "terjadi kesalahan di server")
 	}
+}
+
+// storeDetail mengambil keterangan yang ditempelkan store pada sebuah error
+// domain — "invalid: judul grup wajib diisi" jadi "judul grup wajib diisi".
+//
+// Hanya bentuk `fmt.Errorf("%w: keterangan", base)` yang dipercaya, karena
+// hanya bentuk itu yang ditulis dengan sengaja untuk dibaca orang. Error yang
+// membungkus base dari arah lain bisa saja membawa isi kueri atau nama tabel,
+// dan yang itu dijawab dengan kalimat umum.
+//
+// Sebelumnya 409 selalu dijawab "sudah ada atau bentrok", dan "paling banyak 20
+// pesan disematkan" adalah persis jenis penolakan yang tidak bisa ditebak dari
+// kalimat itu.
+func storeDetail(err, base error, fallback string) string {
+	prefix := base.Error() + ": "
+	if msg := err.Error(); strings.HasPrefix(msg, prefix) {
+		return strings.TrimPrefix(msg, prefix)
+	}
+	return fallback
 }
 
 func decodeJSON(r *http.Request, dst any) error {
