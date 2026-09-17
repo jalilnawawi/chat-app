@@ -6,6 +6,7 @@ import type { Conversation } from '../types';
 import Avatar, { dotFor, statusLabel } from './Avatar';
 import Icon from './Icon';
 import NewChatDialog from './NewChatDialog';
+import { formatDuration } from './VoicePlayer';
 
 /** Judul percakapan: grup pakai nama grup, DM pakai nama lawan bicara. */
 export function conversationTitle(c: Conversation): string {
@@ -56,6 +57,7 @@ function preview(c: Conversation): string {
   const a = atts[0]!;
   if (a.mime.startsWith('image/')) return '📷 Gambar';
   if (a.mime.startsWith('video/')) return '🎬 Video';
+  if (a.durationMs !== undefined) return `🎤 Pesan suara ${formatDuration(a.durationMs)}`;
   if (a.mime.startsWith('audio/')) return '🎵 Rekaman suara';
   return `📎 ${a.name}`;
 }

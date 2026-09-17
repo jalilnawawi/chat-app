@@ -36,7 +36,12 @@ sematkan, plus jendela riwayat untuk melompat ke pesan setahun lalu. Diukur pada
 sejuta pesan: index pencarian 43 MB (trigram 207 MB), kata umum 23–69 ms lintas
 semua percakapan. Lihat [docs/menemukan-pesan.md](docs/menemukan-pesan.md).
 
-Berikutnya: lihat **Fase 13 — kandidat berikutnya**.
+Pesan suara & kolom tulis: **SELESAI** (17 Sep 2026) — rekam dan kirim pesan
+suara, pemilih emoji di kolom tulis dan di reaksi, dan tombol reaksi pindah ke
+samping gelembung. Rekaman WebM dari Chrome sebelumnya akan tercatat sebagai
+`video/webm`. Lihat [docs/pesan-suara-dan-kolom-tulis.md](docs/pesan-suara-dan-kolom-tulis.md).
+
+Berikutnya: lihat **Fase 14 — kandidat berikutnya**.
 
 Legend: `[ ]` belum · `[~]` jalan · `[x]` selesai
 
@@ -805,9 +810,47 @@ percakapan yang sama.
   kata umum tumbuh bersama seluruh tabel; jalannya (partisi atau `btree_gin`)
   sudah ditulis, pemicunya belum ada
 
-## Fase 13 — Kandidat berikutnya
-- [ ] **Pesan suara**: lampiran audio dan permintaan sepotong sudah jalan sejak
-      Fase 8; yang belum cuma UI perekamnya
+## Fase 13 — Pesan suara & kolom tulis
+Keputusan dan angka lengkapnya di
+[docs/pesan-suara-dan-kolom-tulis.md](docs/pesan-suara-dan-kolom-tulis.md).
+
+### Pesan suara
+- [x] `narrowContainer`: klaim pengunggah hanya boleh mempersempit wadah
+      WebM/MP4/Ogg ke versi suaranya — tidak pernah berpindah kelas
+- [x] M4A (brand tanpa `mp4*`) dikenali dari kotak `ftyp`, hanya bila klaimnya
+      `audio/mp4`
+- [x] `attachments.duration_ms` (0009) lewat `?d=`, hanya untuk `audio/*`,
+      ikut ke salinan jsonb, riwayat, dan terusan
+- [x] `audio/webm`, `audio/mp4`, `audio/ogg` disajikan inline
+- [x] Perekam: Opus 32 kbps, maks 5 menit (dikirim sendiri), min 0,7 detik,
+      tingkat suara dari `AnalyserNode`, mikrofon dilepas di setiap jalan keluar
+- [x] Rekaman lewat laci lampiran dan terkirim sendiri begitu terunggah
+- [x] Pemutar sendiri: durasi sebelum diputar, geser, 1×/1,5×/2×, satu suara
+      pada satu waktu
+- [x] Sidebar, sematan, dan push menyebut "Pesan suara"
+
+### Kolom tulis
+- [x] Emoji (kiri) dan lampiran (kanan) di dalam kotak tulis
+- [x] Tombol Rekam menggantikan Kirim selama kotak kosong
+- [x] Papan emoji: enam kelompok + "Terakhir dipakai", disisipkan di posisi
+      kursor, 514 emoji diperiksa terhadap `validReaction`
+
+### Reaksi
+- [x] Tombol di samping gelembung, sejajar tengah: kiri untuk pesan sendiri,
+      kanan untuk pesan orang
+- [x] Baris reaksi hanya ada kalau ada reaksi
+- [x] Bilah cepat + "lainnya" membuka papan emoji yang sama
+- [x] Muat di layar 360 px
+
+### Verifikasi
+- [x] `go vet` + `go test -race ./...` bersih; test store durasi dibuktikan
+      gagal tanpa perbaikannya
+- [x] `tsc --noEmit` + `vite build` bersih
+- [x] Uji HTTP dengan WebM/Ogg/M4A asli
+- [x] Browser (Brave headless, `MediaRecorder` asli, mikrofon tiruan): 45/45,
+      termasuk 390 px, terang dan gelap
+
+## Fase 14 — Kandidat berikutnya
 - [ ] Partisi `messages` — tetap ditunda, dan pemicunya tetap belum ada; rencana
       lengkapnya sudah ditulis di [docs/scaling.md](docs/scaling.md)
 - [ ] Pratinjau bingkai pertama untuk video — menuntut dekoder video di dalam
@@ -815,6 +858,7 @@ percakapan yang sama.
 - [ ] Beberapa ukuran turunan (`srcset`) — satu ukuran sudah menutup selisih
       seratus kali lipat; yang kedua hanya dua kali, dengan menggandakan jumlah
       objek di penyimpanan
+- [ ] Bentuk gelombang pada pemutar pesan suara
 
 ## Sebelum aplikasi ini boleh dipakai orang
 Bukan fase, melainkan daftar yang harus lunas kapan pun tujuannya berubah dari

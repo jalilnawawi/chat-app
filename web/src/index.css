@@ -182,6 +182,24 @@ body {
   animation-delay: 0.3s;
 }
 
+/**
+ * Titik merah selama merekam — gerak kedua yang tidak dipicu orang, dengan
+ * alasan yang sama: dia satu-satunya kabar bahwa mikrofonnya sedang mendengar.
+ */
+@keyframes rekam {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.rekam {
+  animation: rekam 1.2s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -17,7 +17,9 @@ permintaan sepotong di
 dan bereaksi di [docs/balas-sebut-reaksi.md](docs/balas-sebut-reaksi.md);
 pengelolaan grup di [docs/kelola-grup.md](docs/kelola-grup.md); pengelolaan akun
 dan profil di [docs/kelola-akun.md](docs/kelola-akun.md); mencari, meneruskan,
-dan menyematkan pesan di [docs/menemukan-pesan.md](docs/menemukan-pesan.md).
+dan menyematkan pesan di [docs/menemukan-pesan.md](docs/menemukan-pesan.md); pesan
+suara, pemilih emoji, dan tombol reaksi di
+[docs/pesan-suara-dan-kolom-tulis.md](docs/pesan-suara-dan-kolom-tulis.md).
 
 ## Menjalankan
 
@@ -103,6 +105,7 @@ docs/balas-sebut-reaksi.md  membalas, menyebut, dan bereaksi
 docs/kelola-grup.md    pengelolaan grup
 docs/kelola-akun.md    akun, profil, sesi, dan status
 docs/menemukan-pesan.md  cari, teruskan, sematkan, dan jendela riwayat
+docs/pesan-suara-dan-kolom-tulis.md  pesan suara, emoji, dan tombol reaksi
 ```
 
 ## Keputusan desain
@@ -202,10 +205,14 @@ Uraian lengkap keduanya di [docs/lampiran-dan-push.md](docs/lampiran-dan-push.md
 ## Lampiran
 
 ```
-POST   /api/attachments?w=&h=       multipart, field "file" → objek Attachment
+POST   /api/attachments?w=&h=&d=    multipart, field "file" → objek Attachment
 GET    /api/attachments/{id}        isi berkasnya, hanya untuk yang berhak
 GET    /api/attachments/{id}/thumb  turunan kecil, izin yang sama persis
 ```
+
+Pesan suara memakai jalur yang sama: `d` adalah panjang rekaman dalam milidetik
+(hanya untuk `audio/*`, kembali sebagai `durationMs`), dan `Content-Type` bagian
+berkas boleh mempersempit wadah WebM/MP4/Ogg ke versi suaranya — tidak lebih.
 
 Id yang dikembalikan disebut di `attachmentIds` saat mengirim pesan. Satu pesan
 boleh membawa sampai sepuluh lampiran, dan boleh tanpa teks sama sekali.
