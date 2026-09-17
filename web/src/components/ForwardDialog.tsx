@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { KIND_LABEL } from '../teks';
 import { MAX_FORWARD_TARGETS, useStore, type ForwardOutcome } from '../store';
 import type { Message } from '../types';
 import Avatar from './Avatar';
@@ -75,7 +76,7 @@ export default function ForwardDialog({
     message.body ||
     (message.attachments.length > 1
       ? `📎 ${message.attachments.length} lampiran`
-      : message.attachments[0]?.name || 'Lampiran');
+      : message.attachments[0]?.name || KIND_LABEL.file);
 
   return (
     <div

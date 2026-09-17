@@ -6,7 +6,7 @@ import type { Conversation } from '../types';
 import Avatar, { dotFor, statusLabel } from './Avatar';
 import Icon from './Icon';
 import NewChatDialog from './NewChatDialog';
-import { formatDuration } from './VoicePlayer';
+import { attachmentsText } from '../format';
 
 /** Judul percakapan: grup pakai nama grup, DM pakai nama lawan bicara. */
 export function conversationTitle(c: Conversation): string {
@@ -51,15 +51,7 @@ function preview(c: Conversation): string {
 
   if (last.body) return last.forwarded ? `Diteruskan: ${last.body}` : last.body;
 
-  const atts = last.attachments ?? [];
-  if (atts.length === 0) return '';
-  if (atts.length > 1) return `📎 ${atts.length} lampiran`;
-  const a = atts[0]!;
-  if (a.mime.startsWith('image/')) return '📷 Gambar';
-  if (a.mime.startsWith('video/')) return '🎬 Video';
-  if (a.durationMs !== undefined) return `🎤 Pesan suara ${formatDuration(a.durationMs)}`;
-  if (a.mime.startsWith('audio/')) return '🎵 Rekaman suara';
-  return `📎 ${a.name}`;
+  return attachmentsText(last.attachments ?? []);
 }
 
 /**

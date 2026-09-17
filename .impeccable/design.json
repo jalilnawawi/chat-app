@@ -1,0 +1,546 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-17T14:55:17.436518+00:00",
+  "title": "Design System: Chat App",
+  "extensions": {
+    "colorMeta": {
+      "teal-laguna": {
+        "role": "primary",
+        "displayName": "Teal Laguna",
+        "canonical": "oklch(0.545 0.11 196)",
+        "tonalRamp": [
+          "oklch(0.15 0.11 196)",
+          "oklch(0.27 0.11 196)",
+          "oklch(0.39 0.11 196)",
+          "oklch(0.51 0.11 196)",
+          "oklch(0.63 0.11 196)",
+          "oklch(0.75 0.11 196)",
+          "oklch(0.87 0.11 196)",
+          "oklch(0.95 0.11 196)"
+        ]
+      },
+      "teal-laguna-teks": {
+        "role": "primary",
+        "displayName": "Teal Laguna untuk Teks",
+        "canonical": "oklch(0.505 0.105 196)",
+        "tonalRamp": [
+          "oklch(0.15 0.105 196)",
+          "oklch(0.27 0.105 196)",
+          "oklch(0.39 0.105 196)",
+          "oklch(0.51 0.105 196)",
+          "oklch(0.63 0.105 196)",
+          "oklch(0.75 0.105 196)",
+          "oklch(0.87 0.105 196)",
+          "oklch(0.95 0.105 196)"
+        ]
+      },
+      "teal-laguna-lembut": {
+        "role": "primary",
+        "displayName": "Teal Laguna Lembut",
+        "canonical": "oklch(0.945 0.03 196)",
+        "tonalRamp": [
+          "oklch(0.15 0.03 196)",
+          "oklch(0.27 0.03 196)",
+          "oklch(0.39 0.03 196)",
+          "oklch(0.51 0.03 196)",
+          "oklch(0.63 0.03 196)",
+          "oklch(0.75 0.03 196)",
+          "oklch(0.87 0.03 196)",
+          "oklch(0.95 0.03 196)"
+        ]
+      },
+      "putih-di-atas-teal": {
+        "role": "primary",
+        "displayName": "Putih di Atas Teal",
+        "canonical": "oklch(1 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.27 0 0)",
+          "oklch(0.39 0 0)",
+          "oklch(0.51 0 0)",
+          "oklch(0.63 0 0)",
+          "oklch(0.75 0 0)",
+          "oklch(0.87 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "mangga-panggilan": {
+        "role": "secondary",
+        "displayName": "Mangga Panggilan",
+        "canonical": "oklch(0.78 0.15 72)",
+        "tonalRamp": [
+          "oklch(0.15 0.15 72)",
+          "oklch(0.27 0.15 72)",
+          "oklch(0.39 0.15 72)",
+          "oklch(0.51 0.15 72)",
+          "oklch(0.63 0.15 72)",
+          "oklch(0.75 0.15 72)",
+          "oklch(0.87 0.15 72)",
+          "oklch(0.95 0.15 72)"
+        ]
+      },
+      "mangga-lembut": {
+        "role": "secondary",
+        "displayName": "Mangga Lembut",
+        "canonical": "oklch(0.945 0.045 80)",
+        "tonalRamp": [
+          "oklch(0.15 0.045 80)",
+          "oklch(0.27 0.045 80)",
+          "oklch(0.39 0.045 80)",
+          "oklch(0.51 0.045 80)",
+          "oklch(0.63 0.045 80)",
+          "oklch(0.75 0.045 80)",
+          "oklch(0.87 0.045 80)",
+          "oklch(0.95 0.045 80)"
+        ]
+      },
+      "mangga-tinta": {
+        "role": "secondary",
+        "displayName": "Mangga Tinta",
+        "canonical": "oklch(0.38 0.1 62)",
+        "tonalRamp": [
+          "oklch(0.15 0.1 62)",
+          "oklch(0.27 0.1 62)",
+          "oklch(0.39 0.1 62)",
+          "oklch(0.51 0.1 62)",
+          "oklch(0.63 0.1 62)",
+          "oklch(0.75 0.1 62)",
+          "oklch(0.87 0.1 62)",
+          "oklch(0.95 0.1 62)"
+        ]
+      },
+      "kanvas-mint": {
+        "role": "neutral",
+        "displayName": "Kanvas Mint",
+        "canonical": "oklch(0.966 0.018 192)",
+        "tonalRamp": [
+          "oklch(0.15 0.018 192)",
+          "oklch(0.27 0.018 192)",
+          "oklch(0.39 0.018 192)",
+          "oklch(0.51 0.018 192)",
+          "oklch(0.63 0.018 192)",
+          "oklch(0.75 0.018 192)",
+          "oklch(0.87 0.018 192)",
+          "oklch(0.95 0.018 192)"
+        ]
+      },
+      "kertas": {
+        "role": "neutral",
+        "displayName": "Kertas",
+        "canonical": "oklch(1 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.27 0 0)",
+          "oklch(0.39 0 0)",
+          "oklch(0.51 0 0)",
+          "oklch(0.63 0 0)",
+          "oklch(0.75 0 0)",
+          "oklch(0.87 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "garis-pisah": {
+        "role": "neutral",
+        "displayName": "Garis Pisah",
+        "canonical": "oklch(0.905 0.014 200)",
+        "tonalRamp": [
+          "oklch(0.15 0.014 200)",
+          "oklch(0.27 0.014 200)",
+          "oklch(0.39 0.014 200)",
+          "oklch(0.51 0.014 200)",
+          "oklch(0.63 0.014 200)",
+          "oklch(0.75 0.014 200)",
+          "oklch(0.87 0.014 200)",
+          "oklch(0.95 0.014 200)"
+        ]
+      },
+      "garis-batas": {
+        "role": "neutral",
+        "displayName": "Garis Batas",
+        "canonical": "oklch(0.62 0.025 205)",
+        "tonalRamp": [
+          "oklch(0.15 0.025 205)",
+          "oklch(0.27 0.025 205)",
+          "oklch(0.39 0.025 205)",
+          "oklch(0.51 0.025 205)",
+          "oklch(0.63 0.025 205)",
+          "oklch(0.75 0.025 205)",
+          "oklch(0.87 0.025 205)",
+          "oklch(0.95 0.025 205)"
+        ]
+      },
+      "tinta-laut-dalam": {
+        "role": "neutral",
+        "displayName": "Tinta Laut Dalam",
+        "canonical": "oklch(0.28 0.03 225)",
+        "tonalRamp": [
+          "oklch(0.15 0.03 225)",
+          "oklch(0.27 0.03 225)",
+          "oklch(0.39 0.03 225)",
+          "oklch(0.51 0.03 225)",
+          "oklch(0.63 0.03 225)",
+          "oklch(0.75 0.03 225)",
+          "oklch(0.87 0.03 225)",
+          "oklch(0.95 0.03 225)"
+        ]
+      },
+      "tinta-redup": {
+        "role": "neutral",
+        "displayName": "Tinta Redup",
+        "canonical": "oklch(0.525 0.025 222)",
+        "tonalRamp": [
+          "oklch(0.15 0.025 222)",
+          "oklch(0.27 0.025 222)",
+          "oklch(0.39 0.025 222)",
+          "oklch(0.51 0.025 222)",
+          "oklch(0.63 0.025 222)",
+          "oklch(0.75 0.025 222)",
+          "oklch(0.87 0.025 222)",
+          "oklch(0.95 0.025 222)"
+        ]
+      },
+      "bahaya": {
+        "role": "status",
+        "displayName": "Bahaya",
+        "canonical": "oklch(0.52 0.19 25)",
+        "tonalRamp": [
+          "oklch(0.15 0.19 25)",
+          "oklch(0.27 0.19 25)",
+          "oklch(0.39 0.19 25)",
+          "oklch(0.51 0.19 25)",
+          "oklch(0.63 0.19 25)",
+          "oklch(0.75 0.19 25)",
+          "oklch(0.87 0.19 25)",
+          "oklch(0.95 0.19 25)"
+        ]
+      },
+      "bahaya-lembut": {
+        "role": "status",
+        "displayName": "Bahaya Lembut",
+        "canonical": "oklch(0.955 0.025 25)",
+        "tonalRamp": [
+          "oklch(0.15 0.025 25)",
+          "oklch(0.27 0.025 25)",
+          "oklch(0.39 0.025 25)",
+          "oklch(0.51 0.025 25)",
+          "oklch(0.63 0.025 25)",
+          "oklch(0.75 0.025 25)",
+          "oklch(0.87 0.025 25)",
+          "oklch(0.95 0.025 25)"
+        ]
+      },
+      "berhasil": {
+        "role": "status",
+        "displayName": "Berhasil",
+        "canonical": "oklch(0.5 0.13 155)",
+        "tonalRamp": [
+          "oklch(0.15 0.13 155)",
+          "oklch(0.27 0.13 155)",
+          "oklch(0.39 0.13 155)",
+          "oklch(0.51 0.13 155)",
+          "oklch(0.63 0.13 155)",
+          "oklch(0.75 0.13 155)",
+          "oklch(0.87 0.13 155)",
+          "oklch(0.95 0.13 155)"
+        ]
+      },
+      "berhasil-lembut": {
+        "role": "status",
+        "displayName": "Berhasil Lembut",
+        "canonical": "oklch(0.95 0.04 155)",
+        "tonalRamp": [
+          "oklch(0.15 0.04 155)",
+          "oklch(0.27 0.04 155)",
+          "oklch(0.39 0.04 155)",
+          "oklch(0.51 0.04 155)",
+          "oklch(0.63 0.04 155)",
+          "oklch(0.75 0.04 155)",
+          "oklch(0.87 0.04 155)",
+          "oklch(0.95 0.04 155)"
+        ]
+      },
+      "tepi-gelembung": {
+        "role": "neutral",
+        "displayName": "Tepi Gelembung",
+        "canonical": "oklch(0.905 0.014 200)",
+        "tonalRamp": [
+          "oklch(0.15 0.014 200)",
+          "oklch(0.27 0.014 200)",
+          "oklch(0.39 0.014 200)",
+          "oklch(0.51 0.014 200)",
+          "oklch(0.63 0.014 200)",
+          "oklch(0.75 0.014 200)",
+          "oklch(0.87 0.014 200)",
+          "oklch(0.95 0.014 200)"
+        ]
+      },
+      "teal-dalam": {
+        "role": "primary",
+        "displayName": "Teal Dalam",
+        "canonical": "oklch(0.44 0.09 196)",
+        "tonalRamp": [
+          "oklch(0.15 0.09 196)",
+          "oklch(0.27 0.09 196)",
+          "oklch(0.39 0.09 196)",
+          "oklch(0.51 0.09 196)",
+          "oklch(0.63 0.09 196)",
+          "oklch(0.75 0.09 196)",
+          "oklch(0.87 0.09 196)",
+          "oklch(0.95 0.09 196)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Wordmark di halaman masuk saja."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Judul kartu, dialog, dan panel."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Nama di daftar dan header."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Teks umum dan isian; dasar 15px."
+      },
+      "message": {
+        "displayName": "Message",
+        "purpose": "Isi gelembung pesan."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Label kolom, chip, pratinjau, nama penulis di grup."
+      },
+      "meta": {
+        "displayName": "Meta",
+        "purpose": "Jam, penanda hari, jumlah; angka tabular."
+      }
+    },
+    "shadows": [
+      {
+        "name": "pop",
+        "value": "0 12px 32px -12px oklch(0.28 0.03 225 / 0.28)",
+        "purpose": "Satu-satunya bayangan: dialog, kartu masuk, pemilih, tombol ke bawah. Gelap: oklch(0 0 0 / 0.55)."
+      },
+      {
+        "name": "tirai",
+        "value": "background: oklch(0.28 0.03 225 / 0.4); backdrop-filter: blur(2px)",
+        "purpose": "Latar di belakang dialog modal."
+      }
+    ],
+    "motion": [
+      {
+        "name": "transition-default",
+        "value": "150ms cubic-bezier(0.4, 0, 0.2, 1)",
+        "purpose": "Transisi warna, latar, dan skala (bawaan Tailwind `transition`)."
+      },
+      {
+        "name": "denyut",
+        "value": "1.2s infinite, jeda 0.15s per titik",
+        "purpose": "Tiga titik sedang mengetik."
+      },
+      {
+        "name": "rekam",
+        "value": "1.2s ease-in-out infinite",
+        "purpose": "Titik merah selama merekam."
+      },
+      {
+        "name": "press",
+        "value": "scale(0.95–0.99)",
+        "purpose": "Respons tekan tombol kirim dan tombol utama."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "40rem"
+      },
+      {
+        "name": "md",
+        "value": "48rem"
+      },
+      {
+        "name": "lg",
+        "value": "64rem"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Tombol Utama",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Aksi utama formulir, misalnya Masuk atau Daftar.",
+      "html": "<button class=\"ds-btn-primary\">Masuk</button>",
+      "css": ".ds-btn-primary { font-family: var(--font-sans, 'Plus Jakarta Sans Variable', system-ui, sans-serif); width: 100%; background: var(--color-accent); color: var(--color-accent-ink); border: none; border-radius: 12px; padding: 12px 16px; font-size: 15px; font-weight: 600; cursor: pointer; transition: filter .15s, transform .15s; } .ds-btn-primary:hover { filter: brightness(1.1); } .ds-btn-primary:active { transform: scale(0.99); } .ds-btn-primary:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Tombol Kirim",
+      "kind": "button",
+      "refersTo": "button-send",
+      "description": "Pil kirim di samping kolom tulis.",
+      "html": "<button class=\"ds-btn-send\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4.5 12h6m-6.2-7.1 15.2 7.1-15.2 7.1 1.7-7.1-1.7-7.1z\"/></svg><span>Kirim</span></button>",
+      "css": ".ds-btn-send { font-family: var(--font-sans, 'Plus Jakarta Sans Variable', system-ui, sans-serif); display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 16px; border: none; border-radius: 9999px; background: var(--color-accent); color: var(--color-accent-ink); font-size: 15px; font-weight: 600; cursor: pointer; transition: filter .15s, transform .15s; } .ds-btn-send:hover { filter: brightness(1.1); } .ds-btn-send:active { transform: scale(0.95); } .ds-btn-send:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Tombol Lunak",
+      "kind": "button",
+      "refersTo": "button-soft",
+      "description": "Aksi sekunder yang tetap bernada teal, misalnya Percakapan baru.",
+      "html": "<button class=\"ds-btn-soft\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4 20h4l10.5-10.5a2.12 2.12 0 0 0-3-3L5 17v3zM14.5 6.5l3 3\"/></svg>Percakapan baru</button>",
+      "css": ".ds-btn-soft { font-family: var(--font-sans, 'Plus Jakarta Sans Variable', system-ui, sans-serif); display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 12px; border: none; border-radius: 12px; background: var(--color-accent-soft); color: var(--color-accent-text); font-size: 14px; font-weight: 600; cursor: pointer; transition: filter .15s; } .ds-btn-soft:hover { filter: brightness(0.95); } .ds-btn-soft:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Tombol Ikon",
+      "kind": "button",
+      "refersTo": "button-icon",
+      "description": "Aksi header dan toolbar; redup saat diam.",
+      "html": "<button class=\"ds-btn-icon\" aria-label=\"Cari\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35\"/></svg></button>",
+      "css": ".ds-btn-icon { display: grid; place-items: center; width: 40px; height: 40px; border: none; border-radius: 12px; background: transparent; color: var(--color-muted); cursor: pointer; transition: background .15s, color .15s; } .ds-btn-icon:hover { background: var(--color-canvas); color: var(--color-ink); } .ds-btn-icon:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Kolom Isian",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Kolom formulir dengan label di atasnya.",
+      "html": "<label class=\"ds-field\"><span>Email</span><input class=\"ds-input\" type=\"email\" placeholder=\"nama@kantor.id\"></label>",
+      "css": ".ds-field { font-family: var(--font-sans, 'Plus Jakarta Sans Variable', system-ui, sans-serif); display: block; } .ds-field > span { font-size: 13px; font-weight: 600; color: var(--color-muted); } .ds-input { font-family: var(--font-sans, 'Plus Jakarta Sans Variable', system-ui, sans-serif); display: block; width: 100%; margin-top: 6px; padding: 10px 14px; border: 1px solid var(--color-line-strong); border-radius: 12px; background: var(--color-canvas); color: var(--color-ink); font-size: 15px; outline: none; transition: background .15s; } .ds-input:focus { background: var(--color-surface); } .ds-input:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Gelembung Pesan",
+      "kind": "custom",
+      "refersTo": "bubble-mine",
+      "description": "Gelembung sendiri (teal) dan orang lain (kertas), dengan ekor 7px dan cincin mangga untuk sebutan.",
+      "html": "<div class=\"ds-thread\"><div class=\"ds-bubble ds-bubble-other\">Rapat jam 10 jadi?</div><div class=\"ds-bubble ds-bubble-other ds-cont ds-call\">@Rani tolong cek draf ya</div><div class=\"ds-bubble ds-bubble-mine\">Jadi, aku siapkan ruangannya.</div></div>",
+      "css": ".ds-thread { font-family: var(--font-sans, 'Plus Jakarta Sans Variable', system-ui, sans-serif); display: flex; flex-direction: column; gap: 2px; padding: 12px; background: var(--color-canvas); } .ds-bubble { max-width: 80%; padding: 10px 14px; font-size: 15px; line-height: 1.45; border-radius: 18px; } .ds-bubble-other { align-self: flex-start; background: var(--color-surface); color: var(--color-ink); border: 1px solid var(--color-line-bubble); border-bottom-left-radius: 7px; } .ds-bubble-other.ds-cont { border-top-left-radius: 7px; } .ds-call { box-shadow: 0 0 0 2px var(--color-call); } .ds-bubble-mine { align-self: flex-end; margin-top: 12px; background: var(--color-accent); color: var(--color-accent-ink); border-bottom-right-radius: 7px; }"
+    },
+    {
+      "name": "Kolom Tulis",
+      "kind": "input",
+      "refersTo": "composer",
+      "description": "Pil tulis pesan; garisnya menjadi teal saat fokus di dalamnya.",
+      "html": "<div class=\"ds-composer\"><textarea rows=\"1\" placeholder=\"Tulis pesan…\"></textarea></div>",
+      "css": ".ds-composer { display: flex; align-items: flex-end; min-height: 44px; padding: 0 16px; border: 1px solid var(--color-line-strong); border-radius: 22px; background: var(--color-canvas); transition: border-color .15s, background .15s; } .ds-composer:focus-within { border-color: var(--color-accent); background: var(--color-surface); } .ds-composer textarea { font-family: var(--font-sans, 'Plus Jakarta Sans Variable', system-ui, sans-serif); flex: 1; resize: none; border: none; background: transparent; color: var(--color-ink); font-size: 15px; line-height: 24px; padding: 10px 0; outline: none; }"
+    },
+    {
+      "name": "Baris Percakapan",
+      "kind": "nav",
+      "refersTo": "conversation-item",
+      "description": "Item daftar percakapan; aktif memakai latar teal lembut.",
+      "html": "<nav class=\"ds-list\"><button class=\"ds-item ds-active\" aria-current=\"true\"><span class=\"ds-av\">RA</span><span class=\"ds-txt\"><b>Rani Aulia</b><small>Jadi, aku siapkan ruangannya.</small></span></button><button class=\"ds-item\"><span class=\"ds-av ds-av2\">TP</span><span class=\"ds-txt\"><b>Tim Produk</b><small>Budi: draf sudah diunggah</small></span><span class=\"ds-mention\">@</span></button></nav>",
+      "css": ".ds-list { font-family: var(--font-sans, 'Plus Jakarta Sans Variable', system-ui, sans-serif); display: flex; flex-direction: column; gap: 2px; padding: 8px; background: var(--color-surface); } .ds-item { font-family: var(--font-sans, 'Plus Jakarta Sans Variable', system-ui, sans-serif); display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px; border: none; border-radius: 12px; background: transparent; color: var(--color-ink); text-align: left; cursor: pointer; transition: background .15s; } .ds-item:hover { background: var(--color-canvas); } .ds-item.ds-active { background: var(--color-accent-soft); } .ds-av { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 9999px; background: oklch(0.9 0.055 196); color: oklch(0.35 0.09 196); font-weight: 700; font-size: 15px; } .ds-av2 { background: oklch(0.9 0.055 285); color: oklch(0.35 0.09 285); } .ds-txt { display: flex; flex-direction: column; min-width: 0; flex: 1; } .ds-txt b { font-size: 15px; font-weight: 700; } .ds-txt small { font-size: 13px; color: var(--color-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-mention { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 9999px; background: var(--color-call); color: var(--color-call-ink); font-size: 13px; font-weight: 800; }"
+    },
+    {
+      "name": "Chip Reaksi",
+      "kind": "chip",
+      "refersTo": "chip-reaction",
+      "description": "Reaksi di bawah gelembung; milik sendiri bernada teal.",
+      "html": "<div class=\"ds-reacts\"><button class=\"ds-chip ds-chip-mine\">👍 <span>3</span></button><button class=\"ds-chip\">🎉 <span>1</span></button></div>",
+      "css": ".ds-reacts { display: flex; gap: 4px; } .ds-chip { font-family: var(--font-sans, 'Plus Jakarta Sans Variable', system-ui, sans-serif); display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; min-height: 32px; border: 1px solid var(--color-line); border-radius: 9999px; background: var(--color-surface); color: var(--color-muted); font-size: 13px; cursor: pointer; transition: border-color .15s, color .15s; } .ds-chip span { font-variant-numeric: tabular-nums; } .ds-chip:hover { border-color: var(--color-accent); color: var(--color-ink); } .ds-chip-mine { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-accent-text); font-weight: 700; }"
+    },
+    {
+      "name": "Menu Pesan",
+      "kind": "custom",
+      "refersTo": "message-menu",
+      "description": "Panah kecil di pojok kanan atas gelembung — redup saat diam, penuh saat baris di-hover — dan daftar tindakan dengan baris reaksi cepat; tindakan merusak paling akhir.",
+      "html": "<div class=\"ds-mm\"><div class=\"ds-mm-bubble\"><span class=\"ds-mm-spacer\"></span>Siap, akan saya tandai yang meragukan.<button class=\"ds-mm-btn\" aria-label=\"Tindakan untuk pesan ini\" aria-expanded=\"true\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M6 9.5l6 6 6-6\"/></svg></button></div><div class=\"ds-mm-list\" role=\"menu\"><button role=\"menuitem\">Balas</button><button role=\"menuitem\">Teruskan</button><button role=\"menuitem\">Edit</button><hr><button role=\"menuitem\" class=\"ds-mm-danger\">Hapus untuk semua</button></div></div>",
+      "css": ".ds-mm { font-family: var(--font-sans, 'Plus Jakarta Sans Variable', system-ui, sans-serif); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; } .ds-mm-bubble { position: relative; padding: 10px 14px; border-radius: 18px 18px 7px 18px; background: var(--color-accent); color: var(--color-accent-ink); font-size: 15px; } .ds-mm-btn { position: absolute; top: 4px; right: 4px; display: grid; place-items: center; width: 28px; height: 28px; border: none; border-radius: 9999px; background: var(--color-accent); color: var(--color-accent-ink); cursor: pointer; } .ds-mm-btn svg { transform: rotate(180deg); } .ds-mm-btn { opacity: .8; } .ds-mm-btn:hover, .ds-mm-btn:focus-visible { opacity: 1; } .ds-mm-list { width: 224px; padding: 6px; border: 1px solid var(--color-line); border-radius: 16px; background: var(--color-surface); box-shadow: 0 12px 32px -12px oklch(0.28 0.03 225 / 0.28); } .ds-mm-list button { font-family: var(--font-sans, 'Plus Jakarta Sans Variable', system-ui, sans-serif); display: flex; align-items: center; width: 100%; min-height: 44px; padding: 0 12px; border: none; border-radius: 12px; background: transparent; color: var(--color-ink); font-size: 15px; font-weight: 500; text-align: left; cursor: pointer; } .ds-mm-list button:hover, .ds-mm-list button:focus-visible { background: var(--color-canvas); } .ds-mm-list hr { margin: 4px 8px; border: none; border-top: 1px solid var(--color-line); } .ds-mm-list .ds-mm-danger { color: var(--color-danger); } .ds-mm-list .ds-mm-danger:hover { background: var(--color-danger-soft); } .ds-mm-spacer { float: right; width: 28px; height: 28px; margin: -6px -6px 0 6px; }"
+    },
+    {
+      "name": "Pesan Gagal",
+      "kind": "custom",
+      "refersTo": "button-retry",
+      "description": "Gelembung yang tidak terkirim, dengan sebab dan dua jalan keluar.",
+      "html": "<div class=\"ds-fail\"><div class=\"ds-fail-bubble\">Laporan stok sudah saya kirim</div><div class=\"ds-fail-row\" role=\"alert\"><span>Tidak terkirim — menunggu koneksi</span><button class=\"ds-fail-ghost\">Tulis ulang</button><button class=\"ds-fail-retry\">Kirim ulang</button></div></div>",
+      "css": ".ds-fail { font-family: var(--font-sans, 'Plus Jakarta Sans Variable', system-ui, sans-serif); display: flex; flex-direction: column; align-items: flex-end; gap: 8px; padding: 12px; background: var(--color-canvas); } .ds-fail-bubble { padding: 10px 14px; border-radius: 18px 18px 7px 18px; background: var(--color-accent); color: var(--color-accent-ink); font-size: 15px; box-shadow: 0 0 0 2px var(--color-canvas), 0 0 0 4px var(--color-danger); } .ds-fail-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; } .ds-fail-row span { color: var(--color-danger); font-size: 13px; font-weight: 600; } .ds-fail-row button { font-family: var(--font-sans, 'Plus Jakarta Sans Variable', system-ui, sans-serif); height: 44px; padding: 0 16px; border-radius: 9999px; font-size: 14px; font-weight: 600; cursor: pointer; } .ds-fail-ghost { border: none; background: transparent; color: var(--color-muted); } .ds-fail-retry { border: 1px solid var(--color-danger); background: var(--color-surface); color: var(--color-danger); } .ds-fail-retry:hover { background: var(--color-danger-soft); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Pagi di Tepi Air",
+    "overview": "Layar ini seperti pagi yang cerah di tepi laguna. Kanvasnya kertas putih yang disemburati mint, suara sendiri berwarna teal laguna, dan mangga hanya muncul saat ada yang memanggil. Hasilnya segar, tenang, dan jelas. Aplikasinya dipakai seharian untuk kerja tim, jadi dia tidak boleh terasa seperti dokumen kantor. Dia juga tidak boleh menuntut perhatian yang tidak perlu.\n\nKepadatannya sedang: huruf dasar 15px, target sentuh 44px di kolom tulis, dan ruang napas yang cukup antara baris percakapan. Semua warna dipilih setelah kontrasnya dihitung, karena penggunanya lintas umur dan targetnya WCAG 2.2 AA. Teks yang harus dikira-kira adalah teks yang gagal.\n\nDisiplin utamanya adalah sinyal. Setiap nada punya satu tugas, dan gerak hanya ada kalau dia satu-satunya cara menyampaikan kabar. Tema gelap bukan kebalikan tema terang: perannya sama, hanya sumber cahayanya yang berubah.",
+    "keyCharacteristics": [
+      "Kanvas mint pucat, permukaan kertas putih, dan tinta biru laut dalam, bukan hitam.",
+      "Satu aksen teal untuk \"milikku dan yang bisa ditekan\"; mangga khusus untuk panggilan.",
+      "Plus Jakarta Sans di seluruh aplikasi, dengan dasar 15px.",
+      "Datar saat diam; bayangan hanya untuk benda yang melayang.",
+      "Sudut lembut di mana-mana, dengan satu sudut rapat di gelembung sebagai ekor.",
+      "Tiga keadaan tema (sistem, terang, gelap) yang dipilih lewat atribut `data-tema`."
+    ],
+    "rules": [
+      {
+        "name": "The One Signal, One Meaning Rule",
+        "body": "Setiap nada punya satu tugas. Mangga tidak pernah muncul sebagai hiasan. Kalau mangga ada di layar, artinya ada yang memanggil namamu.",
+        "section": "colors"
+      },
+      {
+        "name": "The Ring, Not Fill Rule",
+        "body": "Latar gelembung sudah membedakan pesan sendiri dari pesan orang. Karena itu, sebutan ditandai dengan cincin, bukan dengan bidang.",
+        "section": "colors"
+      },
+      {
+        "name": "The Contrast First Rule",
+        "body": "Rasio kontras dihitung sebelum warna dipilih, bukan sebaliknya. Warna baru wajib lolos WCAG 2.2 AA di kedua tema.",
+        "section": "colors"
+      },
+      {
+        "name": "The Fifteen Pixel Floor Rule",
+        "body": "Teks yang dibaca, bukan dipindai, tidak pernah di bawah 15px. Ukuran 13px ke bawah hanya untuk label dan meta.",
+        "section": "typography"
+      },
+      {
+        "name": "The One Family Rule",
+        "body": "Jangan menambah keluarga huruf kedua. Pakai bobot 400–800 untuk membangun hierarki.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat At Rest Rule",
+        "body": "Panel, header, gelembung, dan daftar tidak pernah memakai bayangan. Kalau sebuah benda tidak melayang, beri dia garis, bukan bayangan.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Undo Over Confirm Rule",
+        "body": "Tindakan merusak yang berlaku untuk semua orang ditahan sebentar dan menawarkan \"Urungkan\", bukan dialog \"Yakin?\". Tindakan yang tidak bisa ditahan (membuang rekaman panjang) memakai ketukan kedua.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Solid White On Teal Rule",
+        "body": "Putih di atas Teal Laguna hanya 4,6:1. Teks di dalam gelembung sendiri selalu putih PENUH — tanpa opacity, tanpa putih transparan. Pembeda dibuat lewat bobot, ukuran, atau bidang Teal Dalam.",
+        "section": "colors"
+      }
+    ],
+    "dos": [
+      "**Do** memakai token warna semantik (`bg-accent`, `text-muted`, `border-line-strong`) supaya tema gelap ikut berubah tanpa varian `dark:`.",
+      "**Do** memakai `accent-text`, bukan `accent`, untuk teks teal kecil di atas kertas.",
+      "**Do** memberi Garis Batas (`line-strong`) pada setiap kolom isian dan kontrol bergaris, dan Garis Pisah (`line`) pada pemisah biasa.",
+      "**Do** membuat target sentuh minimal 40px, dan 44px di kolom tulis.",
+      "**Do** memakai ikon garis dari `Icon.tsx` untuk tombol.",
+      "**Do** menghormati `prefers-reduced-motion`. Kabar yang dibawa gerak tetap harus terlihat saat animasinya berhenti.",
+      "**Do** mengumpulkan tindakan atas sebuah pesan di menu panah pojok gelembung, dengan tindakan merusak paling akhir dan berwarna Bahaya.",
+      "**Do** memberi elemen yang menggambar fokusnya sendiri kelas `cincin-sendiri`, lalu memindahkan cincinnya ke wadah (`focus-within`).",
+      "**Do** memesan ruang untuk kontrol yang menumpang di dalam gelembung; kontrol tidak boleh menutupi teks, di perangkat mana pun.",
+      "**Do** memasang wilayah status sebelum teksnya datang; wilayah yang lahir bersama teksnya sering dilewatkan pembaca layar.",
+      "**Do** membedakan papan ketik dan jari untuk Enter: kirim di papan ketik, baris baru di layar sentuh.",
+      "**Do** memakai `PillButton` untuk tombol pil, dan `format.ts` / `teks.ts` untuk waktu, cuplikan, dan kalimat yang dipakai di lebih dari satu tempat."
+    ],
+    "donts": [
+      "**Don't** memakai mangga untuk apa pun selain panggilan atau sebutan, termasuk hiasan, tombol, atau sorotan.",
+      "**Don't** memberi bayangan pada panel, header, gelembung, atau baris daftar.",
+      "**Don't** memakai emoji sebagai lambang tombol.",
+      "**Don't** memudarkan tombol utama dengan opacity saat nonaktif. Pakai bentuk bergaris Kertas dengan teks redup.",
+      "**Don't** menampilkan kabar jaringan atau status sistem dengan mangga.",
+      "**Don't** menulis teks bacaan di bawah 15px, atau memakai keluarga huruf kedua.",
+      "**Don't** menambah gerak yang tidak dipicu orang, kecuali gerak itu satu-satunya cara menyampaikan kabar (seperti tiga titik mengetik dan titik rekam).",
+      "**Don't** menyalin palet gelap ke media query. Tema dipilih lewat `data-tema`, dan palet ditulis sekali saja.",
+      "**Don't** memakai bayangan berwarna sebagai pudar untuk menutupi teks di bawah kontrol.",
+      "**Don't** menulis tindakan yang masih bisa diurungkan dalam bentuk lampau (\"dihapus\"); tulis yang sedang terjadi (\"menghapus…\").",
+      "**Don't** memakai mangga untuk \"@semua\" di gelembung pengirimnya sendiri.",
+      "**Don't** memakai opacity atau putih transparan untuk teks di dalam gelembung sendiri.",
+      "**Don't** menumpuk lebih dari satu kabar di atas kolom tulis.",
+      "**Don't** menyembunyikan satu-satunya jalan ke sebuah tindakan di balik hover."
+    ]
+  }
+}

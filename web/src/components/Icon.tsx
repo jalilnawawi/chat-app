@@ -37,7 +37,13 @@ export type IconName =
   | 'hapus'
   | 'putar'
   | 'jeda'
-  | 'tambah';
+  | 'tambah'
+  | 'peringatan'
+  | 'ulang'
+  | 'terkirim'
+  | 'tulis-ulang'
+  | 'buka-menu'
+  | 'salin';
 
 /** Jalur `d` tiap ikon. Semuanya digambar di kotak 24×24 yang sama. */
 const JALUR: Record<IconName, string> = {
@@ -75,6 +81,15 @@ const JALUR: Record<IconName, string> = {
   putar: 'M7 4.5v15l12.5-7.5z',
   jeda: 'M8 5v14M16 5v14',
   tambah: 'M12 5v14M5 12h14',
+  peringatan: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7.5v5.5M12 16.5h.01',
+  ulang: 'M3.5 12a8.5 8.5 0 0 1 14.9-5.6L20.5 8.5M20.5 3.5v5h-5M20.5 12a8.5 8.5 0 0 1-14.9 5.6L3.5 15.5M3.5 20.5v-5h5',
+  // Satu centang: sampai di server. Dua centang (`terbaca`): sudah dibaca.
+  terkirim: 'M5 12.5 9.5 17 19 7',
+  // Pensil kecil untuk penanda "diedit" — `tulis` dengan garis dasar.
+  'tulis-ulang': 'M12 20h8M4 20h3l10-10a2.12 2.12 0 0 0-3-3L4 17v3z',
+  // Panah kecil di pojok gelembung yang membuka menu tindakan pesan.
+  'buka-menu': 'M6 9.5l6 6 6-6',
+  salin: 'M9 9h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1zM5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5',
 };
 
 export default function Icon({

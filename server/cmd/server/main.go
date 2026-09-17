@@ -47,6 +47,9 @@ func main() {
 		os.Exit(1)
 	}
 	log = log.With("instance", cfg.InstanceID)
+	if cfg.DotEnvPath != "" {
+		log.Info("variabel dari berkas dimuat", "path", cfg.DotEnvPath)
+	}
 
 	if err := run(cfg, log); err != nil {
 		log.Error("server berhenti", "err", err)

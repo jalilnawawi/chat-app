@@ -13,6 +13,11 @@ import (
 )
 
 type Config struct {
+	// DotEnvPath adalah berkas `.env` yang ikut dibaca saat memuat, atau ""
+	// bila tidak ada. Hanya untuk dicatat di log: orang yang heran kenapa
+	// lampiran menyala perlu tahu dari mana nilainya datang.
+	DotEnvPath string
+
 	DatabaseURL string
 	HTTPAddr    string
 	// AllowedOrigins berisi lebih dari satu entri karena "localhost" dan
@@ -190,7 +195,9 @@ type Config struct {
 const defaultOrigins = "http://localhost:5174,http://127.0.0.1:5174,http://[::1]:5174"
 
 func Load() (Config, error) {
+	dotenv := loadDotEnv()
 	c := Config{
+		DotEnvPath:     dotenv,
 		DatabaseURL:    env("DATABASE_URL", "postgres://chat:chat@localhost:5433/chatapp?sslmode=disable"),
 		HTTPAddr:       env("HTTP_ADDR", ":8090"),
 		AllowedOrigins: splitOrigins(env("ALLOWED_ORIGIN", defaultOrigins)),

@@ -1,7 +1,8 @@
 import { useStore } from '../store';
 import { formatBytes } from './AttachmentList';
 import Icon from './Icon';
-import { formatDuration } from './VoicePlayer';
+import { formatDuration } from '../format';
+import { KIND_LABEL } from '../teks';
 import type { Upload } from '../types';
 
 /**
@@ -57,7 +58,7 @@ export default function UploadStrip({ conversationId }: { conversationId: string
               {/* Nama berkas rekaman dibuat mesin dan tidak berarti apa pun
                   bagi orang yang baru saja bicara. */}
               {u.durationMs !== undefined
-                ? `Pesan suara · ${formatDuration(u.durationMs)}`
+                ? `${KIND_LABEL.voice} · ${formatDuration(u.durationMs)}`
                 : u.name}
             </p>
             <UploadStatus upload={u} onRetry={() => retryUpload(conversationId, u.key)} />
@@ -66,9 +67,12 @@ export default function UploadStrip({ conversationId }: { conversationId: string
           <button
             onClick={() => removeUpload(conversationId, u.key)}
             aria-label={`Buang ${u.name}`}
-            className="absolute -top-2 -right-2 grid size-6 place-items-center rounded-full border border-line bg-surface text-muted shadow-pop transition hover:text-ink"
+            // Lingkaran yang terlihat 28 px, tapi area tekannya 40 px: tombol
+            // ini menempel di sudut kartu, dan jari yang meleset seharusnya
+            // tetap mengenainya, bukan kartunya.
+            className="absolute -top-2.5 -right-2.5 grid size-7 place-items-center rounded-full border border-line bg-surface text-muted shadow-pop transition before:absolute before:-inset-1.5 before:content-[''] hover:text-ink"
           >
-            <Icon name="tutup" size={13} />
+            <Icon name="tutup" size={14} />
           </button>
         </div>
       ))}
@@ -79,11 +83,14 @@ export default function UploadStrip({ conversationId }: { conversationId: string
 function UploadStatus({ upload, onRetry }: { upload: Upload; onRetry: () => void }) {
   if (upload.status === 'failed') {
     if (!upload.retriable) {
-      return <p className="text-[11.5px] text-danger">{upload.error ?? 'gagal'}</p>;
+      return <p className="text-[12px] text-danger">{upload.error ?? 'Gagal'}</p>;
     }
     return (
-      <button onClick={onRetry} className="text-[11.5px] font-medium text-danger underline underline-offset-2">
-        {upload.error ?? 'gagal'} — coba lagi
+      <button
+        onClick={onRetry}
+        className="-my-2.5 min-h-10 text-left text-[12px] font-semibold text-danger underline underline-offset-2"
+      >
+        {upload.error ?? 'Gagal'} — coba lagi
       </button>
     );
   }
@@ -97,9 +104,11 @@ function UploadStatus({ upload, onRetry }: { upload: Upload; onRetry: () => void
       {/* Bilah kemajuan yang sebenarnya, bukan animasi yang berputar tanpa
           tahu apa-apa. Untuk berkas sepuluh megabyte, bedanya adalah antara
           "sedang jalan" dan "mungkin sudah mati". */}
+      {/* Diskalakan, bukan dilebarkan: mengubah `width` memaksa tata letak
+          dihitung ulang puluhan kali per detik selama unggahan berjalan. */}
       <div
-        className="h-full bg-accent transition-[width] duration-150"
-        style={{ width: `${Math.round(upload.progress * 100)}%` }}
+        className="h-full origin-left bg-accent transition-transform duration-150"
+        style={{ transform: `scaleX(${upload.progress})` }}
       />
     </div>
   );

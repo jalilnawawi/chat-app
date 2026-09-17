@@ -47,7 +47,10 @@ const isAudio = (a: Attachment) =>
 export default function AttachmentList({
   attachments,
   mine,
+  imageAlt = 'Gambar',
 }: {
+  /** Teks alternatif gambar. Nama berkas dari kamera ("IMG_2041.jpg") tidak berarti apa-apa. */
+  imageAlt?: string;
   attachments: Attachment[];
   mine: boolean;
 }) {
@@ -61,7 +64,7 @@ export default function AttachmentList({
     <div className="flex flex-col gap-1.5">
       {images.length > 0 && (
         <div className={`grid gap-1.5 ${images.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-          {images.map(a => (
+          {images.map((a, i) => (
             <a
               key={a.id}
               // Yang dibuka saat diklik tetap berkas ASLINYA. Turunan hanya
@@ -78,7 +81,7 @@ export default function AttachmentList({
                 // ditampilkan selebar tiga ratus piksel — oleh setiap anggota
                 // percakapan, setiap kali percakapannya dibuka.
                 src={attachmentURL(a.thumbUrl ?? a.url)}
-                alt={a.name}
+                alt={images.length > 1 ? `${imageAlt} (${i + 1} dari ${images.length})` : imageAlt}
                 // Ruangnya dipesan dari ukuran yang ikut tersimpan saat
                 // diunggah. Tanpa ini, tiap gambar yang selesai dimuat
                 // mendorong daftar pesan — tepat saat orang sedang membaca.
@@ -128,15 +131,17 @@ export default function AttachmentList({
           // sebelum jawaban server tiba.
           download={a.name}
           className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 transition ${
-            mine ? 'bg-accent-ink/15 hover:bg-accent-ink/25' : 'bg-canvas hover:bg-line'
+            // Di gelembung sendiri: bidang teal gelap dengan putih penuh.
+            // Putih transparan di atas lapisan putih tipis turun ke 2,7:1.
+            mine ? 'bg-accent-deep text-accent-ink hover:brightness-110' : 'bg-canvas hover:bg-line'
           }`}
         >
-          <span className={mine ? 'text-accent-ink/80' : 'text-muted'}>
+          <span className={mine ? '' : 'text-muted'}>
             <Icon name="klip" size={18} />
           </span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm font-medium">{a.name}</span>
-            <span className={`block text-[12px] ${mine ? 'text-accent-ink/75' : 'text-muted'}`}>
+            <span className={`block text-[12px] ${mine ? '' : 'text-muted'}`}>
               {formatBytes(a.size)}
             </span>
           </span>

@@ -30,12 +30,21 @@ Butuh Go 1.26+, Bun, dan Docker.
 #    Mailpit (penampung surat untuk pengembangan, dibaca di :8025)
 docker compose up -d
 
-# 2. Backend (migrasi jalan otomatis saat start)
+# 2. Konfigurasi lokal, sekali saja: server membaca .env sendiri
+cp .env.example .env
+
+# 3. Backend (migrasi jalan otomatis saat start)
 cd server && go run ./cmd/server        # http://localhost:8090
 
-# 3. Frontend
+# 4. Frontend
 cd web && bun install && bun run dev    # http://localhost:5174
 ```
+
+Server mencari `.env` dari direktori kerjanya ke atas (jadi `.env` di akar repo
+ditemukan dari `server/`) dan hanya mengisi variabel yang BELUM ada di
+lingkungan — nilai dari shell atau orkestrator selalu menang. Dengan `.env`
+hasil salinan `.env.example`, lampiran, foto profil, dan email langsung menyala
+memakai kontainer dari `docker compose`.
 
 Empat bagian bisa dimatikan lewat satu variabel lingkungan, dan aplikasi tetap
 utuh sebagai chat tanpa keempatnya:

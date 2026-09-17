@@ -4,7 +4,7 @@ import { useStore } from '../store';
 import type { SearchHit } from '../types';
 import Avatar from './Avatar';
 import Icon from './Icon';
-import { excerpt } from './PinBar';
+import { excerpt } from '../format';
 import { conversationTitle } from './Sidebar';
 
 /** Jeda sebelum kotak pencarian benar-benar bertanya ke server. */
