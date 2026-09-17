@@ -28,6 +28,20 @@ import type {
 type MentionDraft = { names: Record<string, string>; all: boolean };
 
 /**
+ * Hapus yang sedang ditahan.
+ *
+ * `due` adalah waktu (ms epoch) permintaannya dikirim. Selama dijeda — kabarnya
+ * sedang disentuh kursor atau fokus papan ketik — `remaining` menyimpan sisa
+ * waktunya dan pengatur waktunya berhenti.
+ */
+export type PendingDelete = {
+  conversationId: string;
+  due: number;
+  remaining?: number;
+  error?: string;
+};
+
+/**
  * Batas ukuran berkas di sisi client.
  *
  * Harus sama dengan MAX_UPLOAD_BYTES di server, dan yang MENGIKAT tetap yang di
@@ -123,6 +137,15 @@ type State = {
   replyTo: Record<string, Message | null>;
   /** Sebutan yang sudah dipilih dari daftar, per percakapan. */
   mentionDraft: Record<string, MentionDraft>;
+  /**
+   * Pesan yang sedang menunggu dihapus, per id.
+   *
+   * Hapus berlaku untuk semua orang dan tidak bisa ditarik kembali di server,
+   * jadi permintaannya ditahan beberapa detik di sini. Selama ditahan,
+   * gelembungnya sudah tampil sebagai "dihapus" dan kabar "Urungkan" ada di
+   * layar. `error` terisi bila server menolak saat waktunya tiba.
+   */
+  deleting: Record<string, PendingDelete>;
 
   setMe: (u: Me | null) => void;
   setConnected: (v: boolean) => void;
@@ -173,6 +196,20 @@ type State = {
   retryMessage: (conversationId: string, pendingId: string) => Promise<void>;
   editMessage: (id: string, body: string) => Promise<void>;
   deleteMessage: (id: string) => Promise<void>;
+  /** Menjadwalkan hapus; baru dikirim ke server setelah DELETE_GRACE_MS. */
+  scheduleDelete: (message: Message) => void;
+  undoDelete: (id: string) => void;
+  /** Mengurungkan semua hapus yang masih menunggu, di semua percakapan. */
+  undoDeletes: () => void;
+  /** Menghentikan hitung mundur semua hapus yang menunggu (WCAG 2.2.1). */
+  pauseDeletes: () => void;
+  resumeDeletes: () => void;
+  /** Mengirim ulang hapus yang ditolak server, tanpa jeda. */
+  retryDelete: (id: string) => void;
+  /** Menutup kabar hapus yang gagal. */
+  dismissDelete: (id: string) => void;
+  /** Membuang pesan yang tidak jadi dikirim dari antrean. */
+  discardPending: (conversationId: string, pendingId: string) => void;
 
   applyMessage: (m: Message) => void;
   applyReaction: (
@@ -240,6 +277,112 @@ const stash = new Map<string, Message[]>();
  */
 const windowing = new Set<string>();
 
+/**
+ * Jeda sebelum hapus benar-benar dikirim — waktu untuk "Urungkan".
+ *
+ * Delapan detik, bukan lima: penggunanya lintas umur, dan waktu yang cukup
+ * untuk membaca kabarnya, memahaminya, lalu menemukan tombolnya diukur dari
+ * pembaca yang paling lambat. Hitung mundurnya tampil di kabar itu sendiri.
+ */
+export const DELETE_GRACE_MS = 8000;
+
+/** Pengatur waktu hapus yang sedang menunggu, per id pesan. */
+const deleteTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * Hapus yang sedang ditahan tetap dikirim saat halaman ditutup.
+ *
+ * Kabarnya sudah mengatakan "menghapus"; menutup tab dalam jeda itu tidak
+ * boleh diam-diam membatalkannya. Yang ingin membatalkan punya tombolnya.
+ */
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => {
+    // Yang dijeda juga: jeda hanya menunda, bukan membatalkan.
+    for (const [id, d] of Object.entries(useStore.getState().deleting)) {
+      if (!d.error) api.deleteMessageOnExit(id);
+    }
+    for (const t of deleteTimers.values()) clearTimeout(t);
+    deleteTimers.clear();
+  });
+}
+
+/**
+ * Antrean kirim yang disimpan di perangkat.
+ *
+ * Pesan yang sudah ditulis tapi belum sampai ke server adalah pesan yang
+ * hilang kalau halamannya dimuat ulang — dan "pesan tidak boleh hilang" adalah
+ * janji pertama aplikasi ini. Disimpan per akun, di localStorage: kecil, dan
+ * cukup untuk beberapa kalimat yang tertahan jaringan.
+ *
+ * Yang dipulihkan selalu berstatus gagal. Pengiriman yang sedang berjalan saat
+ * halaman ditutup tidak diketahui nasibnya, dan "gagal" adalah keadaan yang
+ * punya tombol; `retryStranded` yang mengirimnya ulang begitu tersambung.
+ */
+const kunciAntrean = (userId: string) => `antrean:${userId}`;
+
+function muatAntrean(userId: string): Record<string, PendingMessage[]> {
+  try {
+    const raw = localStorage.getItem(kunciAntrean(userId));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, PendingMessage[]>;
+    const out: Record<string, PendingMessage[]> = {};
+    for (const [cid, list] of Object.entries(parsed)) {
+      if (!Array.isArray(list) || list.length === 0) continue;
+      out[cid] = list.map(p => ({ ...p, status: 'failed' as const, error: p.error }));
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function simpanAntrean(userId: string, pending: Record<string, PendingMessage[]>) {
+  try {
+    const isi = Object.fromEntries(Object.entries(pending).filter(([, l]) => l.length > 0));
+    if (Object.keys(isi).length === 0) localStorage.removeItem(kunciAntrean(userId));
+    else localStorage.setItem(kunciAntrean(userId), JSON.stringify(isi));
+  } catch {
+    // Penyimpanan penuh atau diblokir: antreannya tetap hidup selama tab ini
+    // terbuka, yang hilang hanya ketahanannya terhadap muat ulang.
+  }
+}
+
+function hapusAntrean(userId: string) {
+  try {
+    localStorage.removeItem(kunciAntrean(userId));
+  } catch {
+    // Tidak ada yang bisa dilakukan; lihat simpanAntrean.
+  }
+}
+
+/** Menggabungkan antrean pulihan tanpa menggandakan yang sudah ada. */
+function mergeAntrean(
+  current: Record<string, PendingMessage[]>,
+  restored: Record<string, PendingMessage[]>,
+): Record<string, PendingMessage[]> {
+  const out = { ...current };
+  for (const [cid, list] of Object.entries(restored)) {
+    const have = new Set((out[cid] ?? []).map(p => p.id));
+    out[cid] = [...list.filter(p => !have.has(p.id)), ...(out[cid] ?? [])];
+  }
+  return out;
+}
+
+/**
+ * Mengirim ulang pesan yang gagal TANPA sebab dari server — jaringan putus,
+ * atau dipulihkan dari muat ulang. Yang ditolak server dengan alasan jelas
+ * (kuota, lampiran tidak sah) tidak disentuh: mengulanginya diam-diam hanya
+ * menghasilkan penolakan yang sama.
+ */
+function retryStranded(get: () => State) {
+  const { pending, retryMessage } = get();
+  for (const [cid, list] of Object.entries(pending)) {
+    for (const p of list) {
+      if (p.status === 'failed' && !p.error) void retryMessage(cid, p.id);
+    }
+  }
+}
+
 /** Menggabungkan tampungan ke daftar, lalu mengosongkannya. */
 function drainStash(id: string, list: Message[]): Message[] {
   const held = stash.get(id) ?? [];
@@ -299,9 +442,30 @@ export const useStore = create<State>((set, get) => ({
   typing: {},
   replyTo: {},
   mentionDraft: {},
+  deleting: {},
 
-  setMe: me => set({ me }),
-  setConnected: connected => set({ connected }),
+  setMe: me => {
+    const before = get().me?.id;
+    set({ me });
+    // Antrean yang tertinggal dari kunjungan sebelumnya dipulihkan sekali,
+    // saat orangnya dikenali — bukan saat modul dimuat, karena sebelum itu
+    // belum jelas antrean SIAPA yang boleh ditampilkan di perangkat ini.
+    if (me && me.id !== before) {
+      const restored = muatAntrean(me.id);
+      if (Object.keys(restored).length > 0) {
+        set(s => ({ pending: mergeAntrean(s.pending, restored) }));
+        if (get().connected) retryStranded(get);
+      }
+    }
+  },
+  setConnected: connected => {
+    set({ connected });
+    // Tersambung lagi: pesan yang gagal karena jaringan dicoba ulang sendiri.
+    // Itu janji bilah "menyambungkan ulang" di ChatPanel, dan aman karena id
+    // pesan dibuat di sini — server mengembalikan pesan yang sama, bukan
+    // pesan kedua.
+    if (connected) retryStranded(get);
+  },
 
   /**
    * Kegagalannya diam. Server yang tidak menjawab pertanyaan ini adalah server
@@ -320,6 +484,12 @@ export const useStore = create<State>((set, get) => ({
 
   reset: () =>
     set(s => {
+      // Antrean yang belum terkirim ikut dibuang saat keluar. Komputer yang
+      // dipakai bergantian tidak boleh menyimpan kalimat orang sebelumnya
+      // untuk ditampilkan — apalagi dikirim — atas nama orang berikutnya.
+      if (s.me) hapusAntrean(s.me.id);
+      for (const t of deleteTimers.values()) clearTimeout(t);
+      deleteTimers.clear();
       // objectURL menahan berkasnya di memori sampai dilepas. Logout tanpa ini
       // menyisakan setiap gambar yang pernah dipilih selama sesi itu.
       for (const list of Object.values(s.uploads)) {
@@ -348,6 +518,7 @@ export const useStore = create<State>((set, get) => ({
         typing: {},
         replyTo: {},
         mentionDraft: {},
+        deleting: {},
       };
     }),
 
@@ -850,6 +1021,79 @@ export const useStore = create<State>((set, get) => ({
     get().applyMessage(await api.deleteMessage(id));
   },
 
+  scheduleDelete: message => {
+    const { id, conversationId } = message;
+    set(s => ({
+      deleting: { ...s.deleting, [id]: { conversationId, due: Date.now() + DELETE_GRACE_MS } },
+    }));
+    armDelete(set, get, id, DELETE_GRACE_MS);
+  },
+
+  undoDelete: id => {
+    clearTimeout(deleteTimers.get(id));
+    deleteTimers.delete(id);
+    set(s => {
+      const next = { ...s.deleting };
+      delete next[id];
+      return { deleting: next };
+    });
+  },
+
+  undoDeletes: () => {
+    for (const [id, d] of Object.entries(get().deleting)) {
+      if (!d.error) get().undoDelete(id);
+    }
+  },
+
+  pauseDeletes: () => {
+    const now = Date.now();
+    const next = { ...get().deleting };
+    let changed = false;
+    for (const [id, d] of Object.entries(next)) {
+      if (d.error || d.remaining !== undefined) continue;
+      clearTimeout(deleteTimers.get(id));
+      deleteTimers.delete(id);
+      next[id] = { ...d, remaining: Math.max(0, d.due - now) };
+      changed = true;
+    }
+    if (changed) set({ deleting: next });
+  },
+
+  resumeDeletes: () => {
+    const now = Date.now();
+    const next = { ...get().deleting };
+    const armed: [string, number][] = [];
+    for (const [id, d] of Object.entries(next)) {
+      if (d.remaining === undefined) continue;
+      // Dilanjutkan dengan paling sedikit dua detik: orang yang baru saja
+      // melepas kursor dari kabarnya tidak boleh kehilangan pilihannya
+      // di detik yang sama.
+      const ms = Math.max(2000, d.remaining);
+      next[id] = { conversationId: d.conversationId, due: now + ms };
+      armed.push([id, ms]);
+    }
+    if (armed.length === 0) return;
+    set({ deleting: next });
+    for (const [id, ms] of armed) armDelete(set, get, id, ms);
+  },
+
+  retryDelete: id => {
+    const d = get().deleting[id];
+    if (!d) return;
+    set(s => ({ deleting: { ...s.deleting, [id]: { conversationId: d.conversationId, due: Date.now() } } }));
+    armDelete(set, get, id, 0);
+  },
+
+  dismissDelete: id => get().undoDelete(id),
+
+  discardPending: (conversationId, pendingId) =>
+    set(s => ({
+      pending: {
+        ...s.pending,
+        [conversationId]: (s.pending[conversationId] ?? []).filter(p => p.id !== pendingId),
+      },
+    })),
+
   applyMessage: m => {
     const current = get().messages[m.conversationId] ?? [];
     const known = current.some(x => x.id === m.id);
@@ -1309,6 +1553,48 @@ async function imageSize(file: File): Promise<{ width: number; height: number } 
   }
 }
 
+/**
+ * Memasang pengatur waktu satu hapus yang ditahan. Saat waktunya tiba dan hapus
+ * itu masih ditunggu (tidak diurungkan, tidak dijeda), permintaannya dikirim.
+ */
+function armDelete(
+  set: (fn: (s: State) => Partial<State>) => void,
+  get: () => State,
+  id: string,
+  ms: number,
+) {
+  clearTimeout(deleteTimers.get(id));
+  deleteTimers.set(
+    id,
+    setTimeout(() => {
+      deleteTimers.delete(id);
+      const d = get().deleting[id];
+      if (!d || d.remaining !== undefined || d.error) return;
+      get()
+        .deleteMessage(id)
+        .then(() =>
+          set(s => {
+            const next = { ...s.deleting };
+            delete next[id];
+            return { deleting: next };
+          }),
+        )
+        .catch(err =>
+          set(s => ({
+            deleting: {
+              ...s.deleting,
+              [id]: {
+                conversationId: d.conversationId,
+                due: 0,
+                error: err instanceof Error ? err.message : 'Pesan gagal dihapus',
+              },
+            },
+          })),
+        );
+    }, ms),
+  );
+}
+
 /** Satu percobaan kirim; dipakai baik oleh kiriman pertama maupun retry. */
 async function deliver(
   set: (fn: (s: State) => Partial<State>) => void,
@@ -1345,7 +1631,11 @@ async function deliver(
         // Jatuh ke penandaan gagal di bawah.
       }
     }
-    const reason = err instanceof ApiError ? err.message : undefined;
+    // Sebab hanya dicatat untuk penolakan yang memang dari server ini (4xx).
+    // Jaringan putus dan server yang tidak menjawab (5xx — termasuk 502 dari
+    // proxy di depannya) dibiarkan tanpa sebab, supaya retryStranded
+    // mengirimnya ulang begitu koneksinya pulih.
+    const reason = err instanceof ApiError && err.status < 500 ? err.message : undefined;
     set(s => ({
       pending: {
         ...s.pending,
@@ -1356,3 +1646,9 @@ async function deliver(
     }));
   }
 }
+
+// Setiap perubahan antrean langsung disimpan. Pembandingnya identitas objek:
+// zustand membuat objek `pending` baru hanya saat isinya memang berubah.
+useStore.subscribe((state, prev) => {
+  if (state.me && state.pending !== prev.pending) simpanAntrean(state.me.id, state.pending);
+});

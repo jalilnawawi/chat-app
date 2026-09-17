@@ -1,10 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { useStore } from '../store';
 import AttachmentList from './AttachmentList';
 import Avatar from './Avatar';
 import Icon from './Icon';
+import MessageMenu, { MenuCornerSpacer, type MenuItem } from './MessageMenu';
+import { EditForm, FailedRow, Highlighted, MetaRow, Quote, SystemNote } from './MessageParts';
 import ReactionRow, { ReactionButton } from './ReactionRow';
-import type { Message, PendingMessage, ReplyPreview, SystemEvent } from '../types';
+import { excerpt } from '../format';
+import { T } from '../teks';
+import { useCoarsePointer } from '../useMediaQuery';
+import type { Message, PendingMessage } from '../types';
 
 type Props = {
   message?: Message;
@@ -40,20 +45,27 @@ type Props = {
   pinned?: boolean;
   /** Dipanggil sekali saat pesan yang memanggil kita benar-benar masuk layar. */
   onSeen?: (seq: number) => void;
+  /** Id pembaca: catatan sistem tentang dirinya sendiri ditulis "Kamu". */
+  meId?: string;
+  /** Hapus sudah dijadwalkan; gelembungnya tampil sebagai dihapus sampai waktunya tiba. */
+  deleting?: boolean;
+  /** Menyalin teks pesan; ChatPanel yang mengabarkan hasilnya. */
+  onCopy?: (m: Message) => void;
+  /** Pesan gagal yang ditarik kembali ke kolom tulis. */
+  onRewrite?: (p: PendingMessage) => void;
+  /** Berubah setiap kali ChatPanel meminta pesan ini disunting (↑ di kolom kosong). */
+  editSignal?: number;
+  /** Penyuntingan selesai — disimpan atau dibatalkan. */
+  onEditEnd?: () => void;
 };
 
-const time = (iso: string) =>
-  new Date(iso).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-
-/** Satu kata untuk pesan yang isinya hanya lampiran; kutipan kosong terbaca
- *  seperti pesan kosong, bukan seperti foto yang sedang dibalas. */
-const kindLabel: Record<string, string> = {
-  image: '📷 Gambar',
-  video: '🎬 Video',
-  audio: '🎵 Rekaman suara',
-  file: '📎 Lampiran',
-};
-
+/**
+ * Satu pesan: gelembungnya, tindakannya, reaksinya, dan baris di bawahnya.
+ *
+ * Yang diputuskan di sini adalah KAPAN setiap bagian tampil dan bagaimana
+ * gelembung dibentuk (sudut, ruang untuk panah menu, warna). Bentuk tiap
+ * bagiannya sendiri tinggal di MessageParts.
+ */
 export default function MessageBubble({
   message,
   pending,
@@ -63,7 +75,7 @@ export default function MessageBubble({
   authorAvatar,
   firstOfRun = true,
   gutter = false,
-  readByPeer,
+  readByPeer = false,
   highlights = [],
   callsMe = false,
   nameOf,
@@ -73,49 +85,33 @@ export default function MessageBubble({
   onTogglePin,
   pinned = false,
   onSeen,
+  meId,
+  deleting = false,
+  onCopy,
+  onRewrite,
+  editSignal = 0,
+  onEditEnd,
 }: Props) {
   const editMessage = useStore(s => s.editMessage);
-  const deleteMessage = useStore(s => s.deleteMessage);
+  const scheduleDelete = useStore(s => s.scheduleDelete);
   const retryMessage = useStore(s => s.retryMessage);
+  const discardPending = useStore(s => s.discardPending);
+  const toggleReaction = useStore(s => s.toggleReaction);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message?.body ?? '');
   const rootRef = useRef<HTMLDivElement>(null);
+  const touch = useCoarsePointer();
 
-  // Catatan sistem bukan ucapan siapa pun, jadi dia tidak berbentuk gelembung:
-  // tidak berpihak kiri atau kanan, tidak punya tombol, tidak bisa disentuh.
-  // Bentuknya sendiri yang mengatakan "ini bukan sesuatu yang dikatakan orang".
-  if (message?.kind === 'system' && message.systemEvent) {
-    const ev = message.systemEvent;
-    // Catatan sematan menunjuk sebuah pesan, dan menekannya membawa ke sana —
-    // satu-satunya catatan sistem yang punya tujuan. Bentuknya tetap baris
-    // tengah; yang berubah cuma bahwa dia bisa ditekan.
-    const target = ev.type === 'message.pinned' && ev.messageId && onJump ? ev : null;
-    const cls =
-      'rounded-full border border-line bg-surface px-3 py-1 text-center text-[12px] text-muted';
-    return (
-      <div className="my-3 flex justify-center px-6">
-        {target ? (
-          <button
-            type="button"
-            onClick={() => onJump?.(target.messageId!, target.messageSeq)}
-            className={`${cls} inline-flex items-center gap-1.5 transition hover:border-accent hover:text-accent-text`}
-          >
-            <Icon name="sematan" size={13} />
-            {systemText(ev)}
-          </button>
-        ) : (
-          <p className={cls}>{systemText(ev)}</p>
-        )}
-      </div>
-    );
-  }
+  const isSystem = message?.kind === 'system' && Boolean(message.systemEvent);
+  const deleted = Boolean(message?.deletedAt) || deleting;
 
-  const body = message?.body ?? pending?.body ?? '';
-  const createdAt = message?.createdAt ?? pending?.createdAt ?? '';
-  const deleted = Boolean(message?.deletedAt);
-  const attachments = (message?.attachments ?? pending?.attachments ?? []).filter(() => !deleted);
-  const replyTo = message?.replyTo ?? pending?.replyTo;
+  // Permintaan menyunting dari luar gelembung: ↑ di kolom tulis yang kosong.
+  useEffect(() => {
+    if (!editSignal || !message || message.body === '') return;
+    setDraft(message.body);
+    setEditing(true);
+  }, [editSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Penanda sebutan baru padam setelah pesannya BENAR-BENAR terlihat, bukan
   // saat percakapannya dibuka. Itu seluruh alasan mention_ack_seq terpisah dari
@@ -125,7 +121,6 @@ export default function MessageBubble({
     if (!callsMe || !message || !onSeen) return;
     const el = rootRef.current;
     if (!el) return;
-
     const observer = new IntersectionObserver(
       entries => {
         if (entries.some(e => e.isIntersecting)) {
@@ -139,40 +134,114 @@ export default function MessageBubble({
     return () => observer.disconnect();
   }, [callsMe, message, onSeen]);
 
+  if (isSystem) return <SystemNote message={message!} meId={meId} onJump={onJump} />;
+
+  const body = message?.body ?? pending?.body ?? '';
+  const createdAt = message?.createdAt ?? pending?.createdAt ?? '';
+  const failed = pending?.status === 'failed';
+  const attachments = deleted ? [] : (message?.attachments ?? pending?.attachments ?? []);
+  const replyTo = message?.replyTo ?? pending?.replyTo;
+
   async function saveEdit() {
     if (!message) return;
     const next = draft.trim();
+    if (!next) return;
     setEditing(false);
-    if (next && next !== message.body) await editMessage(message.id, next);
+    onEditEnd?.();
+    if (next !== message.body) await editMessage(message.id, next);
   }
+
+  const cancelEdit = () => {
+    setEditing(false);
+    onEditEnd?.();
+  };
+
+  const menuItems: MenuItem[] = [];
+  if (message && !deleted && !editing) {
+    if (onReply) menuItems.push({ key: 'balas', label: 'Balas', icon: 'balas', onSelect: () => onReply(message) });
+    if (onCopy && message.body !== '')
+      menuItems.push({ key: 'salin', label: 'Salin teks', icon: 'salin', onSelect: () => onCopy(message) });
+    if (onForward)
+      menuItems.push({ key: 'teruskan', label: 'Teruskan', icon: 'teruskan', onSelect: () => onForward(message) });
+    if (onTogglePin)
+      menuItems.push({
+        key: 'sematan',
+        label: pinned ? 'Lepas sematan' : 'Sematkan',
+        icon: 'sematan',
+        onSelect: () => onTogglePin(message, !pinned),
+      });
+    // Pesan tanpa teks tidak punya apa pun untuk diedit; lampiran tidak bisa
+    // diganti setelah terkirim.
+    if (mine && message.body !== '')
+      menuItems.push({
+        key: 'edit',
+        label: 'Edit',
+        icon: 'tulis',
+        onSelect: () => {
+          setDraft(message.body);
+          setEditing(true);
+        },
+      });
+    if (mine)
+      menuItems.push({
+        key: 'hapus',
+        label: 'Hapus untuk semua',
+        icon: 'hapus',
+        danger: true,
+        onSelect: () => scheduleDelete(message),
+      });
+  }
+  const hasMenu = menuItems.length > 0;
 
   /**
    * Sudut gelembung.
    *
    * Tiga sudut selalu bulat penuh; yang keempat — di sisi pengirimnya — selalu
    * rapat. Itu yang membuat sederet pesan dari satu orang terbaca sebagai satu
-   * blok dengan tulang punggung lurus, bukan sebagai lima benda terpisah yang
-   * kebetulan berdekatan. Sudut atas ikut dirapatkan saat pesannya BUKAN
-   * pembuka rentetan, sehingga sambungannya rata.
+   * blok dengan tulang punggung lurus. Sudut atas ikut dirapatkan saat pesannya
+   * BUKAN pembuka rentetan, sehingga sambungannya rata.
    */
   const sudut = mine
-    ? `rounded-bubble rounded-br-[7px] ${firstOfRun ? '' : 'rounded-tr-[7px]'}`
-    : `rounded-bubble rounded-bl-[7px] ${firstOfRun ? '' : 'rounded-tl-[7px]'}`;
+    ? `rounded-bubble rounded-br-tail ${firstOfRun ? '' : 'rounded-tr-tail'}`
+    : `rounded-bubble rounded-bl-tail ${firstOfRun ? '' : 'rounded-tl-tail'}`;
+
+  // Gelembung yang isinya hanya lampiran dibuat rapat: padding tebal di
+  // sekeliling foto membuatnya tampak seperti bingkai.
+  const attachmentOnly = attachments.length > 0 && body === '' && !replyTo && !message?.forwarded;
+  // Foto saja: panah menu boleh berdiri di atas fotonya. Pemutar suara dan
+  // kartu berkas punya tombol dan nama di tepi kanannya, jadi untuk mereka
+  // sisi kanan gelembung dipesan selebar panah.
+  const imageOnly = attachmentOnly && attachments.every(a => a.mime.startsWith('image/'));
+  const reserveRight = hasMenu && attachmentOnly && !imageOnly;
+  // Teks adalah baris pertama gelembung: ruang sudut panah ditaruh di dalam
+  // paragrafnya, supaya ikut dihitung saat gelembung menentukan lebarnya.
+  const textFirst = hasMenu && body !== '' && !message?.forwarded && !replyTo && attachments.length === 0;
+  // Di gelembung sendiri tidak ada yang memanggil pembacanya: "@semua" yang
+  // ditulis sendiri tidak boleh menyala mangga — mangga hanya untuk panggilan.
+  const names = mine ? highlights.map(h => ({ ...h, isMe: false })) : highlights;
+
+  const who = mine ? T.youLower : `dari ${authorName || T.someone}`;
+  const summary = message ? excerpt(message) : '';
+
+  // Klik kanan di desktop dan tekan lama di Android membuka menu yang sama.
+  // Kecuali saat ada teks yang sedang dipilih: di sana menu bawaan browser —
+  // salin, cari — justru yang dicari orang.
+  const onContextMenu = (e: MouseEvent<HTMLDivElement>) => {
+    if (!hasMenu || window.getSelection()?.toString()) return;
+    e.preventDefault();
+    e.currentTarget.querySelector<HTMLButtonElement>('[data-menu-trigger]')?.click();
+  };
 
   return (
     <div
       ref={rootRef}
       id={message ? `msg-${message.id}` : undefined}
-      className={`group flex ${firstOfRun ? 'mt-3' : 'mt-0.5'} ${
-        mine ? 'justify-end' : 'justify-start'
-      }`}
+      className={`group flex ${firstOfRun ? 'mt-3' : 'mt-0.5'} ${mine ? 'justify-end' : 'justify-start'}`}
     >
       {/* Foto pengirim hanya di pembuka rentetan; sisanya dapat ruang kosong
           selebar foto itu, supaya seluruh rentetan berdiri di garis yang sama.
-
-          Disejajarkan ke ATAS, bukan ke bawah: yang di bawah blok ini adalah
-          baris jam dan tombol, dan foto yang berdiri di sebelahnya terbaca
-          seperti milik baris itu, bukan milik pesannya. */}
+          Disejajarkan ke ATAS: yang di bawah blok ini adalah baris jam, dan
+          foto di sebelahnya terbaca seperti milik baris itu. */}
       {!mine && gutter && (
         <span className="mt-0.5 mr-2 w-8 shrink-0 self-start">
           {showAuthor && <Avatar name={authorName} url={authorAvatar} size={32} />}
@@ -187,36 +256,40 @@ export default function MessageBubble({
         )}
 
         {/* Gelembung dan tombol reaksinya sebaris: tombolnya di sisi yang
-            menghadap ke tengah layar — kiri untuk pesan sendiri, kanan untuk
-            pesan orang. */}
+            menghadap ke tengah layar. */}
         <div className={`flex max-w-full items-center gap-1 ${mine ? 'flex-row-reverse' : ''}`}>
           <div
-            className={`min-w-0 text-[15px] leading-[1.45] ${sudut} ${
-              // Gelembung yang isinya cuma gambar dibuat rapat: padding tebal di
-              // sekeliling foto membuatnya tampak seperti bingkai, bukan seperti
-              // foto yang dikirim.
-              attachments.length > 0 && body === '' && !deleted && !replyTo ? 'p-1.5' : 'px-3.5 py-2.5'
-            } ${
+            onContextMenu={onContextMenu}
+            className={`sasaran-fokus group/bubble relative min-w-0 text-[15px] leading-[1.45] ${sudut} ${
+              // Di dalam gelembung teal, cincin fokus teal tidak terlihat —
+              // lihat .gelembung-sendiri di index.css.
+              mine && !deleted ? 'gelembung-sendiri' : ''
+            } ${attachmentOnly ? `p-1.5 ${reserveRight ? 'pr-9' : ''}` : 'px-3.5 py-2.5'} ${
               deleted
                 ? 'border border-dashed border-line-strong text-muted italic'
                 : mine
                   ? 'bg-accent text-accent-ink'
-                  : 'border border-line bg-surface'
+                  : 'border border-line-bubble bg-surface'
             } ${
-              // Pesan yang memanggil kita diberi PINGGIRAN mangga, bukan bidang
-              // mangga. Latar sudah dipakai untuk membedakan pesan sendiri dari
-              // pesan orang, dan dua arti pada satu isyarat tidak bisa dibaca
-              // sekaligus. Pinggiran adalah isyarat ketiga yang masih kosong.
+              // Pesan yang memanggil kita diberi PINGGIRAN mangga, bukan bidang:
+              // latar sudah dipakai untuk membedakan pesan sendiri dari pesan
+              // orang, dan dua arti pada satu isyarat tidak bisa dibaca sekaligus.
               callsMe && !deleted ? 'ring-2 ring-call' : ''
-            } ${pending?.status === 'failed' ? 'opacity-70 ring-1 ring-danger' : ''}`}
+            } ${
+              // Cincin bahaya dengan jarak dari gelembungnya: menempel langsung
+              // di tepi teal, merah dan teal nyaris tidak bisa dibedakan.
+              failed ? 'ring-2 ring-danger ring-offset-2 ring-offset-canvas' : ''
+            }`}
           >
-            {/* Penanda terusan berdiri di atas isinya, dan hanya itu: siapa
-                penulis aslinya tidak ikut dibawa. Kalimat yang diteruskan
-                tanpa penanda ini terbaca sebagai kalimat pengirimnya sendiri. */}
+            {hasMenu && !attachmentOnly && !textFirst && <MenuCornerSpacer />}
+
+            {/* Penanda terusan: siapa penulis aslinya tidak ikut dibawa, tapi
+                kalimat yang diteruskan tanpa penanda terbaca sebagai kalimat
+                pengirimnya sendiri. */}
             {message?.forwarded && !deleted && (
               <p
-                className={`mb-1 flex items-center gap-1 text-[12px] font-semibold italic ${
-                  mine ? 'text-accent-ink/80' : 'text-muted'
+                className={`mb-1 flex items-center gap-1 text-[13px] font-semibold ${
+                  mine ? 'text-accent-ink' : 'text-muted'
                 }`}
               >
                 <Icon name="teruskan" size={13} />
@@ -225,267 +298,101 @@ export default function MessageBubble({
             )}
 
             {replyTo && !deleted && (
-              <Quote reply={replyTo} mine={mine} nameOf={nameOf} onJump={onJump} />
+              // flow-root: kotak ini menyempit di samping ruang sudut panah,
+              // bukan turun ke bawahnya dan meninggalkan pita kosong.
+              <div className="flow-root">
+                <Quote reply={replyTo} mine={mine} nameOf={nameOf} onJump={onJump} />
+              </div>
             )}
 
-            {editing ? (
-              <textarea
-                autoFocus
-                value={draft}
-                onChange={e => setDraft(e.target.value)}
-                onBlur={() => void saveEdit()}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    void saveEdit();
-                  }
-                  if (e.key === 'Escape') setEditing(false);
-                }}
-                className="w-full resize-none bg-transparent text-inherit outline-none"
+            {editing && message ? (
+              <EditForm
+                id={message.id}
+                draft={draft}
+                touch={touch}
+                onChange={setDraft}
+                onSave={() => void saveEdit()}
+                onCancel={cancelEdit}
               />
             ) : (
-              <div className="flex flex-col gap-1.5">
-                <AttachmentList attachments={attachments} mine={mine} />
+              // Blok biasa, bukan flex: baris teks harus bisa membungkus di
+              // samping ruang sudut panah.
+              <div className="space-y-1.5">
+                <AttachmentList
+                  attachments={attachments}
+                  mine={mine}
+                  imageAlt={mine ? 'Gambar yang kamu kirim' : `Gambar dari ${authorName || T.someone}`}
+                />
                 {/* Pesan boleh hanya berisi lampiran — mengirim foto tanpa
                     keterangan adalah hal yang paling biasa dilakukan orang. */}
                 {(body !== '' || deleted) && (
                   <p className="break-words whitespace-pre-wrap">
-                    {deleted ? 'Pesan ini dihapus' : <Highlighted text={body} names={highlights} />}
+                    {textFirst && <MenuCornerSpacer />}
+                    {/* Selama jeda urungkan pesannya BELUM hilang: kalimatnya
+                        mengikuti kabar di bawah ("Menghapus…"), bukan bentuk
+                        lampau yang menyatakan semuanya sudah selesai. */}
+                    {deleted ? (
+                      message?.deletedAt ? T.deletedMessage : T.deletingMessage
+                    ) : (
+                      <Highlighted text={body} names={names} mine={mine} />
+                    )}
                   </p>
                 )}
               </div>
             )}
+
+            {/* Setelah isinya di DOM, walau tampil di sudut atas: pembaca
+                layar membacakan pesannya dulu, baru tindakannya. */}
+            {hasMenu && message && (
+              <MessageMenu
+                items={menuItems}
+                label={`Tindakan untuk pesan ${who}: ${summary.slice(0, 60)}`}
+                mine={mine}
+                summary={summary}
+                reactions={{
+                  given: message.reactions.filter(r => r.mine).map(r => r.emoji),
+                  onReact: emoji => void toggleReaction(message.conversationId, message.id, emoji),
+                }}
+              />
+            )}
           </div>
 
           {message && !deleted && !editing ? (
-            <ReactionButton message={message} mine={mine} />
+            <ReactionButton message={message} mine={mine} label={`Beri reaksi untuk pesan ${who}`} />
           ) : (
             // Ruangnya tetap dipesan: pesan yang baru terkonfirmasi tidak boleh
             // menyempit dan membungkus ulang kalimatnya di depan mata.
-            pending && <span aria-hidden className="w-8 shrink-0" />
+            pending && <span aria-hidden className="w-9 shrink-0 [@media(hover:none)]:hidden" />
           )}
         </div>
+
+        {failed && pending && (
+          <FailedRow
+            pending={pending}
+            onRewrite={() =>
+              onRewrite ? onRewrite(pending) : discardPending(pending.conversationId, pending.id)
+            }
+            onRetry={() => void retryMessage(pending.conversationId, pending.id)}
+          />
+        )}
 
         {message && !deleted && <ReactionRow message={message} mine={mine} />}
 
-        <div
-          className={`mt-1 flex items-center gap-2 px-1 text-[11.5px] text-muted ${
-            mine ? 'justify-end' : 'justify-start'
-          }`}
-        >
-          {pinned && !deleted && (
-            <span title="Disematkan" className="text-accent-text">
-              <Icon name="sematan" size={13} />
-            </span>
-          )}
-          {createdAt && <span className="tabular-nums">{time(createdAt)}</span>}
-          {message?.editedAt && !deleted && <span>diedit</span>}
-
-          {pending?.status === 'sending' && <span>mengirim…</span>}
-          {pending?.status === 'failed' && (
-            <button
-              onClick={() => void retryMessage(pending.conversationId, pending.id)}
-              className="font-semibold text-danger underline underline-offset-2"
-              // Sebab kegagalan ikut ditampilkan: pesan yang ditolak karena
-              // kuota @semua terlihat persis sama dengan yang gagal karena
-              // jaringan, dan keduanya menuntut tindakan yang berbeda.
-              title={pending.error}
-            >
-              {pending.error ?? 'gagal'} — coba lagi
-            </button>
-          )}
-
-          {/* Dua centang, bukan kata "dibaca": dia duduk di baris yang sudah
-              penuh angka dan kata, dan bentuk yang tidak perlu dibaca lebih
-              cepat sampai daripada kata yang perlu. Judulnya tetap ada untuk
-              yang memakai pembaca layar. */}
-          {mine && message && !deleted && readByPeer && (
-            <span title="Sudah dibaca" className="text-accent-text">
-              <Icon name="terbaca" size={15} />
-            </span>
-          )}
-
-          {message && !deleted && !editing && (
-            // Dua syarat, bukan satu.
-            //
-            // `group-hover` di Tailwind v4 dibungkus @media (hover: hover), dan
-            // perangkat tanpa penunjuk — setiap ponsel — melaporkan hover: none.
-            // Dengan satu syarat saja, tombol balas/edit/hapus tidak pernah
-            // muncul di layar sentuh: bukan sulit ditemukan, melainkan tidak
-            // bisa dijangkau sama sekali. Di sana tombolnya memang selalu
-            // tampil, karena tidak ada isyarat lain untuk memunculkannya.
-            <span className="hidden items-center gap-1 group-hover:flex [@media(hover:none)]:flex">
-              {onReply && (
-                <button onClick={() => onReply(message)} className={aksi}>
-                  Balas
-                </button>
-              )}
-              {onForward && (
-                <button onClick={() => onForward(message)} className={aksi}>
-                  Teruskan
-                </button>
-              )}
-              {onTogglePin && (
-                <button onClick={() => onTogglePin(message, !pinned)} className={aksi}>
-                  {pinned ? 'Lepas sematan' : 'Sematkan'}
-                </button>
-              )}
-              {mine && (
-                <>
-                  {/* Pesan tanpa teks tidak punya apa pun untuk diedit;
-                      lampiran tidak bisa diganti setelah terkirim. */}
-                  {message.body !== '' && (
-                    <button
-                      onClick={() => {
-                        setDraft(message.body);
-                        setEditing(true);
-                      }}
-                      className={aksi}
-                    >
-                      Edit
-                    </button>
-                  )}
-                  <button onClick={() => void deleteMessage(message.id)} className={aksi}>
-                    Hapus
-                  </button>
-                </>
-              )}
-            </span>
-          )}
-        </div>
+        {/* Pesan yang sudah dihapus tidak membawa baris jam: dia bukan
+            kejadian yang perlu dicari waktunya, dan jamnya tetap dibacakan
+            lewat label barisnya. */}
+        {!message?.deletedAt && (
+          <MetaRow
+            mine={mine}
+            createdAt={createdAt}
+            pinned={pinned && !deleted}
+            edited={Boolean(message?.editedAt) && !deleted}
+            sending={pending?.status === 'sending'}
+            delivered={Boolean(message) && !deleted}
+            readByPeer={readByPeer}
+          />
+        )}
       </div>
     </div>
   );
-}
-
-/** Tombol kecil di bawah gelembung: tanpa bidang warna sampai disentuh. */
-const aksi =
-  'rounded-md px-1.5 py-0.5 font-medium transition hover:bg-accent-soft hover:text-accent-text';
-
-/**
- * Gelembung kutipan.
- *
- * Isinya datang dari server setiap kali riwayat dimuat, BUKAN disalin saat
- * pesannya dikirim — jadi yang tampil selalu keadaan terbaru: pesan yang sudah
- * diedit menampilkan versi barunya, dan yang sudah dihapus tetap ada sebagai
- * "pesan dihapus" alih-alih menghilang dan menyisakan balasan tanpa konteks.
- */
-function Quote({
-  reply,
-  mine,
-  nameOf,
-  onJump,
-}: {
-  reply: ReplyPreview;
-  mine: boolean;
-  nameOf?: (userId: string) => string;
-  onJump?: (messageId: string, seq?: number) => void;
-}) {
-  const label = reply.deleted
-    ? 'Pesan ini dihapus'
-    : reply.body || kindLabel[reply.kind ?? 'file'] || 'Lampiran';
-
-  return (
-    <button
-      type="button"
-      onClick={() => onJump?.(reply.id, reply.seq)}
-      disabled={!onJump}
-      className={`mb-2 flex w-full flex-col items-start gap-0.5 rounded-lg border-l-[3px] px-2.5 py-1.5 text-left text-[13px] transition ${
-        mine
-          ? 'border-accent-ink/70 bg-accent-ink/15 hover:bg-accent-ink/25'
-          : 'border-accent bg-accent-soft/70 hover:bg-accent-soft'
-      } ${onJump ? 'cursor-pointer' : ''}`}
-    >
-      <span className="font-bold opacity-90">{nameOf?.(reply.senderId) ?? 'Seseorang'}</span>
-      <span className={`line-clamp-2 opacity-80 ${reply.deleted ? 'italic' : ''}`}>{label}</span>
-    </button>
-  );
-}
-
-/**
- * Menyorot sebutan di dalam teks.
- *
- * Yang disorot adalah nama yang memang ada di percakapan ini, dan yang menyebut
- * PEMBACA disorot lebih tegas. Perhatikan bahwa penyorotan ini murni tampilan:
- * siapa yang benar-benar dipanggil sudah ditentukan server dari daftar id,
- * bukan dari teks ini. Kalau keduanya sampai berbeda — misalnya seseorang
- * mengetik "@Budi" tanpa memilihnya dari daftar — yang terjadi adalah tulisan
- * yang tidak tersorot, bukan orang yang salah dibangunkan.
- */
-function Highlighted({ text, names }: { text: string; names: { name: string; isMe: boolean }[] }) {
-  if (names.length === 0) return <>{text}</>;
-
-  // Nama terpanjang lebih dulu: "Budi Santoso" harus menang atas "Budi",
-  // kalau tidak sisanya tertinggal sebagai teks biasa di tengah sorotan.
-  const sorted = [...names].sort((a, b) => b.name.length - a.name.length);
-  const pattern = new RegExp(`@(${sorted.map(n => escapeRegExp(n.name)).join('|')})`, 'g');
-
-  const parts: (string | { name: string; isMe: boolean })[] = [];
-  let last = 0;
-  for (const match of text.matchAll(pattern)) {
-    const at = match.index;
-    if (at > last) parts.push(text.slice(last, at));
-    const found = sorted.find(n => n.name === match[1]);
-    parts.push(found ?? match[0]);
-    last = at + match[0].length;
-  }
-  if (last < text.length) parts.push(text.slice(last));
-
-  return (
-    <>
-      {parts.map((part, i) =>
-        typeof part === 'string' ? (
-          part
-        ) : (
-          <span
-            key={i}
-            className={`rounded px-1 font-bold ${
-              part.isMe ? 'bg-call text-call-ink' : 'bg-current/15'
-            }`}
-          >
-            @{part.name}
-          </span>
-        ),
-      )}
-    </>
-  );
-}
-
-function escapeRegExp(s: string) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/**
- * Menyusun kalimat untuk sebuah catatan sistem.
- *
- * Kalimatnya dirakit DI SINI, bukan disimpan di server. Yang tersimpan cuma
- * kejadiannya — siapa melakukan apa kepada siapa — sehingga bahasanya bisa
- * berubah, atau diterjemahkan, tanpa menulis ulang riwayat siapa pun.
- *
- * Namanya diambil dari catatan itu sendiri, bukan dari daftar anggota: orang
- * yang dikeluarkan sudah tidak ada di sana, dan "Budi mengeluarkan (tidak
- * dikenal)" gagal justru pada satu hal yang ingin diketahui orang.
- */
-function systemText(ev: SystemEvent): string {
-  const actor = ev.actor.name;
-  const targets = (ev.targets ?? []).map(t => t.name).join(', ');
-
-  switch (ev.type) {
-    case 'member.added':
-      return `${actor} menambahkan ${targets}`;
-    case 'member.removed':
-      return `${actor} mengeluarkan ${targets}`;
-    case 'member.left':
-      return `${actor} keluar dari grup`;
-    case 'title.changed':
-      return `${actor} mengganti judul grup jadi "${ev.title}"`;
-    case 'owner.changed':
-      return `${actor} menjadikan ${targets} pemilik grup`;
-    case 'message.pinned':
-      return `${actor} menyematkan sebuah pesan`;
-    case 'message.unpinned':
-      return `${actor} melepas sematan sebuah pesan`;
-    default:
-      return 'Grup diperbarui';
-  }
 }

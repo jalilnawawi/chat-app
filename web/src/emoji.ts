@@ -117,3 +117,14 @@ export function rememberEmoji(emoji: string) {
     // Tidak diingat bukan kegagalan yang perlu diceritakan.
   }
 }
+
+/**
+ * Reaksi cepat.
+ *
+ * Sengaja pendek dan tetap: sembilan dari sepuluh reaksi selesai dengan salah
+ * satu dari delapan ini. Sisanya ada di papan emoji lengkap — dan server tetap
+ * menerima emoji apa pun yang lolos pemeriksaan satu grafem, jadi pilihan ini
+ * tidak mengunci apa-apa.
+ */
+export const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '🙏', '😮', '😢', '🔥'];
+

@@ -22,6 +22,9 @@
   /* Lengkung gelembung. Satu angka, dipakai bersama oleh empat sudut yang
      berbeda-beda nasibnya — lihat MessageBubble. */
   --radius-bubble: 1.125rem;
+  /* Ekor gelembung: sudut rapat di sisi pengirim, dan sambungan antarpesan
+     dalam satu rentetan. */
+  --radius-tail: 7px;
 
   --color-canvas: oklch(0.966 0.018 192);
   --color-surface: oklch(1 0 0);
@@ -29,12 +32,21 @@
   /* Garis yang MEMBATASI sesuatu yang bisa ditekan atau diketik, bukan yang
      sekadar memisahkan. Cukup gelap untuk terlihat tanpa harus dicari. */
   --color-line-strong: oklch(0.62 0.025 205);
+  /* Tepi gelembung orang lain. Di terang sama dengan garis pisah; di gelap
+     dinaikkan sendiri, karena garis pisah gelap nyaris tidak terbedakan dari
+     kanvas dan gelembungnya mengambang tanpa bentuk. */
+  --color-line-bubble: oklch(0.905 0.014 200);
   --color-ink: oklch(0.28 0.03 225);
   --color-muted: oklch(0.525 0.025 222);
 
   --color-accent: oklch(0.545 0.11 196);
   --color-accent-ink: oklch(1 0 0);
   --color-accent-soft: oklch(0.945 0.03 196);
+  /* Bidang di DALAM gelembung teal (kutipan, kartu berkas, kolom sunting).
+     Lebih gelap, bukan putih transparan: putih di atas teal hanya 4,6:1, dan
+     lapisan putih tipis menurunkannya lagi di bawah AA. Di atas bidang ini
+     putih penuh mencapai ±6,8:1. */
+  --color-accent-deep: oklch(0.44 0.09 196);
   /* Teal untuk TEKS berdiri sendiri: yang dipakai mengisi bidang terlalu terang
      untuk dibaca sebagai huruf kecil di atas kertas. */
   --color-accent-text: oklch(0.505 0.105 196);
@@ -85,12 +97,14 @@
   --color-surface: oklch(0.232 0.02 228);
   --color-line: oklch(0.315 0.022 228);
   --color-line-strong: oklch(0.52 0.026 228);
+  --color-line-bubble: oklch(0.4 0.026 228);
   --color-ink: oklch(0.95 0.008 210);
   --color-muted: oklch(0.72 0.02 220);
 
   --color-accent: oklch(0.545 0.105 196);
   --color-accent-ink: oklch(1 0 0);
   --color-accent-soft: oklch(0.3 0.045 200);
+  --color-accent-deep: oklch(0.44 0.085 196);
   --color-accent-text: oklch(0.8 0.09 196);
 
   --color-call: oklch(0.8 0.145 72);
@@ -135,10 +149,29 @@ body {
 
 /* Satu cincin fokus untuk seluruh aplikasi, dan hanya untuk yang berpindah
    lewat papan ketik. Tanpa ini, orang yang tidak memakai tetikus kehilangan
-   jejak posisinya begitu meninggalkan kolom tulis. */
-:focus-visible {
+   jejak posisinya begitu meninggalkan kolom tulis.
+
+   Aturan ini tidak berlapis, jadi dia menang atas utilitas apa pun. Elemen
+   yang menggambar fokusnya sendiri — kolom tulis berbentuk pil, yang cincinnya
+   ada di wadahnya — menandai dirinya dengan `cincin-sendiri`. Tanpa jalan
+   keluar ini, pil bulat itu mendapat kotak persegi di dalam lengkungnya. */
+:focus-visible:not(.cincin-sendiri) {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+
+/* Baris riwayat yang difokus (roving focus) menggambar cincinnya pada
+   gelembung, bukan selebar baris: cincin selebar layar terbaca seperti
+   pilihan baris tabel, bukan seperti pesan yang sedang dipilih. */
+[data-msg]:focus-visible .sasaran-fokus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+/* Di dalam gelembung sendiri latarnya teal: cincin teal dan celahnya lenyap
+   di sana. Cincinnya ikut warna huruf gelembung itu. */
+.gelembung-sendiri :focus-visible:not(.cincin-sendiri) {
+  outline-color: var(--color-accent-ink);
 }
 
 ::selection {

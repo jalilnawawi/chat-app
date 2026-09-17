@@ -2,23 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import type { Message, Pin } from '../types';
 import Icon from './Icon';
-import { formatDuration } from './VoicePlayer';
+import { excerpt } from '../format';
 
 const kosong: Pin[] = [];
-
-/** Satu baris untuk sebuah pesan: teksnya, atau apa yang dilampirkannya. */
-export function excerpt(m: Message): string {
-  if (m.body) return m.body;
-  const n = m.attachments.length;
-  if (n > 1) return `📎 ${n} lampiran`;
-  const a = m.attachments[0];
-  if (!a) return 'Pesan';
-  if (a.mime.startsWith('image/')) return '📷 Gambar';
-  if (a.mime.startsWith('video/')) return '🎬 Video';
-  if (a.durationMs !== undefined) return `🎤 Pesan suara ${formatDuration(a.durationMs)}`;
-  if (a.mime.startsWith('audio/')) return '🎵 Rekaman suara';
-  return `📎 ${a.name}`;
-}
 
 /**
  * Bilah sematan di bawah kepala percakapan.
@@ -46,6 +32,8 @@ export default function PinBar({
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setOpen(false);
@@ -58,8 +46,14 @@ export default function PinBar({
       if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key !== 'Escape') return;
+      setOpen(false);
+      // Fokus kembali ke tombol yang membukanya, bukan hilang ke halaman.
+      if (listRef.current?.contains(document.activeElement)) toggleRef.current?.focus();
     };
+    // Daftar yang dibuka lewat papan ketik langsung menerima fokus di butir
+    // pertamanya; pembaca layar tahu dia sudah di dalam daftar.
+    listRef.current?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
     return () => {
@@ -82,36 +76,62 @@ export default function PinBar({
 
   return (
     <div ref={boxRef} className="relative z-10 border-b border-line bg-surface">
-      <div className="flex items-center gap-2 px-3 py-2 md:px-4">
+      <div className="flex items-center gap-2 px-3 py-1 md:px-4 md:py-2">
         <span className="shrink-0 text-accent-text">
           <Icon name="sematan" size={17} />
         </span>
         <button
           onClick={() => onJump(top.message)}
-          className="min-w-0 flex-1 text-left"
+          className="min-h-10 min-w-0 flex-1 text-left"
           title="Lompat ke pesan yang disematkan"
         >
-          <span className="block text-[12px] font-bold text-accent-text">
-            {pins.length > 1 ? `Disematkan · ${pins.length} pesan` : 'Disematkan'}
-          </span>
-          <span className="block truncate text-[13px]">
+          {/* Satu baris di semua layar: kepala percakapan dan bilah sematan
+              tidak boleh memakan ruang baca sebelum satu pesan pun terlihat,
+              dan isi lengkapnya tinggal satu ketukan. Di layar lebar judulnya
+              duduk di depan kalimat; di ponsel hanya untuk pembaca layar. */}
+          <span className="block truncate text-[14px]">
+            {/* Dua elemen, bukan `md:not-sr-only`: yang terakhir mengembalikan
+                `white-space: normal` dan memotong judul ke baris sendiri. */}
+            <span className="sr-only md:hidden">Disematkan:</span>
+            <span className="mr-1.5 hidden font-bold text-accent-text md:inline">
+              {pins.length > 1 ? `Disematkan (${pins.length})` : 'Disematkan'}
+            </span>
             <span className="font-semibold">{nameOf(top.message.senderId)}:</span>{' '}
             {excerpt(top.message)}
           </span>
         </button>
         {(pins.length > 1 || canPin) && (
           <button
+            ref={toggleRef}
             onClick={() => setOpen(v => !v)}
             aria-expanded={open}
-            className="shrink-0 rounded-lg px-2.5 py-1.5 text-[13px] font-semibold text-muted transition hover:bg-canvas hover:text-ink"
+            aria-label={pins.length > 1 ? `Lihat semua ${pins.length} sematan` : 'Lihat sematan'}
+            className="min-h-10 shrink-0 rounded-xl px-3 text-[14px] font-semibold text-muted transition hover:bg-canvas hover:text-ink"
           >
-            {pins.length > 1 ? 'Semua' : 'Atur'}
+            {/* "Atur" tidak mengatakan apa yang diatur, dan "kelola" terdengar
+                seperti menu pengaturan. Yang dibuka memang daftar untuk dilihat. */}
+            {pins.length > 1 ? (
+              <>
+                <span className="md:hidden">Semua ({pins.length})</span>
+                <span className="hidden md:inline">Lihat semua ({pins.length})</span>
+              </>
+            ) : (
+              <>
+                <span className="md:hidden">Lihat</span>
+                <span className="hidden md:inline">Lihat sematan</span>
+              </>
+            )}
           </button>
         )}
       </div>
 
       {open && (
-        <div className="absolute inset-x-2 top-full mt-1 max-h-[60vh] overflow-y-auto rounded-2xl border border-line bg-surface p-1.5 shadow-pop md:inset-x-4">
+        <div
+          ref={listRef}
+          role="region"
+          aria-label="Pesan yang disematkan"
+          className="absolute inset-x-2 top-full mt-1 max-h-[60vh] overflow-y-auto rounded-2xl border border-line bg-surface p-1.5 shadow-pop md:inset-x-4"
+        >
           {error && (
             <p className="mx-1 mb-1.5 rounded-lg bg-danger-soft px-2.5 py-1.5 text-[13px] text-danger">
               {error}
@@ -149,9 +169,9 @@ export default function PinBar({
                     onClick={() => void unpin(p.message)}
                     aria-label="Lepas sematan"
                     title="Lepas sematan"
-                    className="m-1.5 grid size-8 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-danger-soft hover:text-danger"
+                    className="m-1 grid size-10 shrink-0 place-items-center rounded-xl text-muted transition hover:bg-danger-soft hover:text-danger"
                   >
-                    <Icon name="tutup" size={15} />
+                    <Icon name="tutup" size={16} />
                   </button>
                 )}
               </li>

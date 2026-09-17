@@ -356,6 +356,20 @@ export const api = {
 
   deleteMessage: (id: string) => request<Message>(`/api/messages/${id}`, { method: 'DELETE' }),
 
+  /**
+   * Hapus yang harus tetap sampai walau halamannya sedang ditutup.
+   *
+   * `keepalive` membuat browser menyelesaikan permintaan ini setelah tab
+   * hilang; jawabannya tidak ditunggu siapa pun, jadi tidak ada yang dibaca.
+   */
+  deleteMessageOnExit: (id: string) => {
+    void fetch(`${BASE}/api/messages/${id}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      keepalive: true,
+    }).catch(() => {});
+  },
+
   markRead: (conversationId: string, seq: number) =>
     post<{ lastReadSeq: number }>(`/api/conversations/${conversationId}/read`, { seq }),
 
