@@ -168,6 +168,15 @@ body {
   outline-offset: 3px;
 }
 
+/* Panah menu dan tombol reaksi bersembunyi sampai gelembungnya disentuh
+   kursor. Orang yang berpindah dengan papan ketik tidak punya kursor untuk
+   memunculkannya, jadi baris yang sedang difokus menampilkan keduanya —
+   tindakan yang hanya bisa ditemukan dengan tetikus sama saja dengan tidak
+   ada. */
+[data-msg]:focus-visible .aksi-pesan {
+  opacity: 1;
+}
+
 /* Di dalam gelembung sendiri latarnya teal: cincin teal dan celahnya lenyap
    di sana. Cincinnya ikut warna huruf gelembung itu. */
 .gelembung-sendiri :focus-visible:not(.cincin-sendiri) {

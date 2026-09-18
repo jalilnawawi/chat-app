@@ -236,7 +236,7 @@ export default function MessageBubble({
     <div
       ref={rootRef}
       id={message ? `msg-${message.id}` : undefined}
-      className={`group flex ${firstOfRun ? 'mt-3' : 'mt-0.5'} ${mine ? 'justify-end' : 'justify-start'}`}
+      className={`flex ${firstOfRun ? 'mt-3' : 'mt-0.5'} ${mine ? 'justify-end' : 'justify-start'}`}
     >
       {/* Foto pengirim hanya di pembuka rentetan; sisanya dapat ruang kosong
           selebar foto itu, supaya seluruh rentetan berdiri di garis yang sama.
@@ -256,8 +256,16 @@ export default function MessageBubble({
         )}
 
         {/* Gelembung dan tombol reaksinya sebaris: tombolnya di sisi yang
-            menghadap ke tengah layar. */}
-        <div className={`flex max-w-full items-center gap-1 ${mine ? 'flex-row-reverse' : ''}`}>
+            menghadap ke tengah layar.
+
+            Ini juga `group`-nya: panah menu dan tombol reaksi baru muncul saat
+            kursor ada di sini. Bukan di baris terluar — baris itu selebar
+            layar, dan kursor yang lewat jauh di sisi kosong sudah cukup
+            memunculkan keduanya. Tombol reaksi ikut masuk cakupan, kalau tidak
+            dia lenyap persis saat kursor bergerak dari gelembung ke arahnya. */}
+        <div
+          className={`group flex max-w-full items-center gap-1 ${mine ? 'flex-row-reverse' : ''}`}
+        >
           <div
             onContextMenu={onContextMenu}
             className={`sasaran-fokus group/bubble relative min-w-0 text-[15px] leading-[1.45] ${sudut} ${
