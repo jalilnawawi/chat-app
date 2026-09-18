@@ -41,7 +41,13 @@ suara, pemilih emoji di kolom tulis dan di reaksi, dan tombol reaksi pindah ke
 samping gelembung. Rekaman WebM dari Chrome sebelumnya akan tercatat sebagai
 `video/webm`. Lihat [docs/pesan-suara-dan-kolom-tulis.md](docs/pesan-suara-dan-kolom-tulis.md).
 
-Berikutnya: lihat **Fase 14 — kandidat berikutnya**.
+Ruang percakapan: **SELESAI** (18 Sep 2026) — antrean kirim yang selamat dari
+muat ulang, hapus dan sematan yang bisa diurungkan, riwayat yang bisa dipakai
+dengan papan ketik, dan `ChatPanel` 1066 baris yang dipecah jadi dua belas
+bagian. Panel akun ikut dipecah jadi Profil, Akun, dan Preferensi. Lihat
+[docs/ruang-percakapan.md](docs/ruang-percakapan.md).
+
+Berikutnya: lihat **Fase 15 — kandidat berikutnya**.
 
 Legend: `[ ]` belum · `[~]` jalan · `[x]` selesai
 
@@ -850,7 +856,75 @@ Keputusan dan angka lengkapnya di
 - [x] Browser (Brave headless, `MediaRecorder` asli, mikrofon tiruan): 45/45,
       termasuk 390 px, terang dan gelap
 
-## Fase 14 — Kandidat berikutnya
+## Fase 14 — Ruang percakapan
+Keputusan dan angka lengkapnya di
+[docs/ruang-percakapan.md](docs/ruang-percakapan.md).
+
+### Keandalan
+- [x] Antrean kirim disimpan per akun di perangkat (`antrean:<userId>`),
+      dipulihkan sebagai "gagal", dibuang saat logout
+- [x] Kirim ulang otomatis begitu tersambung; yang ditolak server dengan alasan
+      jelas tidak diulang diam-diam
+- [x] Hapus ditahan 8 detik dengan "Urungkan": hitung mundur terlihat, bisa
+      dijeda, beberapa hapus digabung, dan tetap terkirim saat tab ditutup
+      (`pagehide` + `keepalive`)
+- [x] Sematkan/lepas sematan ditahan 4 detik dengan "Urungkan"; sematan sendiri
+      tidak optimistik
+- [x] Pesan gagal menyebut sebabnya, plus "Tulis ulang" dan "Kirim ulang";
+      rekaman yang terhenti karena pindah ruang disimpan di laci asalnya
+- [x] `NoticeStack`: paling banyak satu kabar di atas kolom tulis, urut menurut
+      apa yang paling butuh tindakan
+
+### Riwayat dan gulir
+- [x] Enam aturan gulir di satu hook (`useHistoryScroll`); percakapan selalu
+      terbuka di pesan terbaru dan pesan sendiri selalu terlihat
+- [x] Pil "N pesan baru"; tempelan ke bawah tidak putus oleh scroll anchoring
+- [x] `chatHistory.ts`: pergantian hari, rentetan (jeda 30 menit memutus), dan
+      lipatan pesan terhapus berurutan
+- [x] Kolom baca 56rem, penanda hari sebagai garis cakrawala, salam menurut jam
+      di keadaan kosong
+
+### Tindakan pesan
+- [x] Menu panah di pojok gelembung dengan baris reaksi cepat; popover di layar
+      lebar, lembar di layar sempit
+- [x] Klik kanan dan tekan lama membuka menu yang sama
+- [x] Di layar sentuh reaksi hanya lewat lembar; Enter membuat baris baru
+- [x] Panah dan tombol reaksi sembunyi sampai gelembungnya dihover, tanpa
+      menggeser tata letak
+
+### Aksesibilitas
+- [x] Riwayat sebagai satu pemberhentian Tab (`useRovingLog`), ditegakkan di DOM
+- [x] Label baris lengkap: siapa, kapan, apa, sebutan, lampiran, jumlah reaksi
+- [x] Wilayah status yang wadahnya sudah terpasang sebelum teksnya datang
+- [x] Esc/Shift+Tab ke riwayat, `↑` menyunting pesan terakhir, daftar sebutan
+      sebagai listbox
+- [x] Teks gelembung sendiri ≥ 4,6:1 di atas `accent-deep`, cincin fokus terlihat
+      di atas teal, target sentuh 40–44px
+
+### Tata ulang kode
+- [x] `ChatPanel` 1066 → 775 baris; dua belas bagian dilepas jadi komponen
+      sendiri, plus hook `useHistoryScroll`/`useRovingLog`/`useMediaQuery` dan
+      modul `format.ts`/`teks.ts`
+- [x] `AccountPanel` 666 baris jadi ProfilePanel, AkunPanel, PreferensiPanel
+      dengan tiga pintu: avatar, ikon kunci, ikon roda
+- [x] `PanelShell` memegang `role="dialog"`, Escape, dan pengurungan fokus —
+      hanya di bawah lg (1024px), saat panelnya benar-benar menutupi layar;
+      GroupPanel dan SearchPanel ikut memakainya
+- [x] Label sungguhan + `autocomplete` + `<form>` di lima kolom setelan akun;
+      lencana "belum terverifikasi" pindah ke token bahaya (dari 1,20:1)
+
+### Server
+- [x] `.env` dibaca sendiri dari direktori kerja ke atas, tanpa menimpa variabel
+      lingkungan yang sudah ada
+- [x] `DELETE /api/account/sessions` — cabut semua perangkat kecuali yang sedang
+      dipakai
+- [x] PRODUCT.md dan DESIGN.md ("Pagi di Tepi Air") + `.impeccable/design.json`
+
+### Verifikasi
+- [x] `go vet` + `go test -race ./...` bersih
+- [x] `tsc --noEmit` + `vite build` bersih (353 kB, 109 kB gzip)
+
+## Fase 15 — Kandidat berikutnya
 - [ ] Partisi `messages` — tetap ditunda, dan pemicunya tetap belum ada; rencana
       lengkapnya sudah ditulis di [docs/scaling.md](docs/scaling.md)
 - [ ] Pratinjau bingkai pertama untuk video — menuntut dekoder video di dalam
