@@ -169,6 +169,11 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("DELETE /api/account/sessions/{id}",
 		s.requireAuth(http.HandlerFunc(s.handleRevokeSession)))
 
+	// Mencabut SEMUA sesi lain sekaligus, dengan kelonggaran kuota yang sama:
+	// ini jalur orang yang baru saja kehilangan ponselnya.
+	mux.Handle("DELETE /api/account/sessions",
+		s.requireAuth(http.HandlerFunc(s.handleRevokeOtherSessions)))
+
 	// Avatar memakai kuota unggahan yang sama dengan lampiran — keduanya
 	// mengalirkan berkas lewat proses ini.
 	mux.Handle("POST /api/account/avatar",

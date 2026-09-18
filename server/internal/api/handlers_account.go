@@ -387,6 +387,34 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// handleRevokeOtherSessions mengeluarkan semua perangkat kecuali yang sedang
+// dipakai.
+//
+// TIDAK menuntut password saat ini, dan itu disengaja. Yang dituntut password
+// adalah tindakan yang bisa merugikan pemilik akun bila dilakukan orang lewat
+// laptop yang ditinggal terbuka — ganti password dan ganti email, keduanya
+// merebut akun. Ini kebalikannya: yang paling buruk bisa dilakukan orang asing
+// di sini adalah mengeluarkan perangkat pemiliknya sendiri, dan pemiliknya
+// tinggal masuk lagi. Menuntut password justru memblokir orang yang sedang
+// buru-buru mengusir perangkat asing dari akunnya.
+func (s *Server) handleRevokeOtherSessions(w http.ResponseWriter, r *http.Request) {
+	me := userFrom(r.Context())
+	current := sessionFrom(r.Context())
+
+	count, err := s.store.RevokeOtherSessions(r.Context(), me.ID, current.Hash)
+	if err != nil {
+		s.writeStoreError(w, err, "cabut sesi lain")
+		return
+	}
+
+	// Sama dengan ganti password: baris yang hilang belum memutus koneksi yang
+	// sudah terbuka. Tanpa baris ini, perangkat yang baru saja dikeluarkan tetap
+	// menerima setiap pesan yang masuk sampai orangnya menutup tab.
+	s.hub.RevokeSessionsExcept(me.ID, current.Hash)
+
+	writeJSON(w, http.StatusOK, map[string]int64{"revoked": count})
+}
+
 // ---------- pembantu ----------
 
 // verifyCurrentPassword adalah gerbang yang dipakai bersama oleh ganti password

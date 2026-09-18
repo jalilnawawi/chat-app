@@ -10,6 +10,7 @@ import type {
   Pin,
   ReactionSummary,
   ServerConfig,
+  Session,
   StatusKind,
   Upload,
   User,
@@ -155,6 +156,21 @@ type State = {
   setStatus: (status: StatusKind, text: string, expiresAt: string | null) => Promise<void>;
   uploadAvatar: (file: File, onProgress: (fraction: number) => void) => Promise<void>;
   removeAvatar: () => Promise<void>;
+
+  /**
+   * Perangkat yang sedang masuk; null selama belum pernah dimuat.
+   *
+   * Tinggal di sini, bukan di dalam panelnya, karena yang mengubah daftar ini
+   * bukan cuma panelnya: mengganti password mengeluarkan semua perangkat lain,
+   * dan daftar yang memuat dirinya sendiri sekali saat dibuka akan terus
+   * menampilkan perangkat yang baru saja dikeluarkan — tepat di bawah kalimat
+   * yang mengabarkan mereka sudah keluar.
+   */
+  sessions: Session[] | null;
+  loadSessions: () => Promise<void>;
+  revokeSession: (id: string) => Promise<void>;
+  /** Mengeluarkan semua perangkat kecuali yang ini; mengembalikan jumlahnya. */
+  revokeOtherSessions: () => Promise<number>;
 
   loadConversations: () => Promise<void>;
   openConversation: (id: string) => Promise<void>;
@@ -443,6 +459,7 @@ export const useStore = create<State>((set, get) => ({
   replyTo: {},
   mentionDraft: {},
   deleting: {},
+  sessions: null,
 
   setMe: me => {
     const before = get().me?.id;
@@ -519,6 +536,7 @@ export const useStore = create<State>((set, get) => ({
         replyTo: {},
         mentionDraft: {},
         deleting: {},
+        sessions: null,
       };
     }),
 
@@ -556,6 +574,22 @@ export const useStore = create<State>((set, get) => ({
 
   removeAvatar: async () => {
     set({ me: await api.removeAvatar() });
+  },
+
+  loadSessions: async () => {
+    set({ sessions: await api.sessions() });
+  },
+
+  revokeSession: async id => {
+    await api.revokeSession(id);
+    set(s => ({ sessions: (s.sessions ?? []).filter(x => x.id !== id) }));
+  },
+
+  revokeOtherSessions: async () => {
+    const { revoked } = await api.revokeOtherSessions();
+    // Yang tersisa pasti tepat satu: sesi yang sedang dipakai membaca ini.
+    set(s => ({ sessions: (s.sessions ?? []).filter(x => x.current) }));
+    return revoked;
   },
 
   loadConversations: async () => {

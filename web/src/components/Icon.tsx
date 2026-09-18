@@ -22,6 +22,8 @@ export type IconName =
   | 'lonceng'
   | 'lonceng-mati'
   | 'keluar'
+  | 'kunci'
+  | 'setelan'
   | 'balas'
   | 'reaksi'
   | 'terbaca'
@@ -59,6 +61,9 @@ const JALUR: Record<IconName, string> = {
   'lonceng-mati':
     'M13.7 20a2 2 0 0 1-3.4 0M18.6 14A5.5 5.5 0 0 0 18 9a6 6 0 0 0-9.3-5M5.9 6.1A6 6 0 0 0 6 9c0 5-2.5 6-2.5 6h13M2 2l20 20',
   keluar: 'M15 17l5-5-5-5M20 12H9M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5',
+  kunci: 'M9 20a5 5 0 1 0 0-10 5 5 0 0 0 0 10M12.6 11.4 20 4M16.5 7.5l2.5 2.5M19 5l2 2',
+  setelan:
+    'M3 7h4m4 0h10M3 12h10m4 0h4M3 17h3m4 0h11M11 7a2 2 0 1 0-4 0 2 2 0 0 0 4 0M17 12a2 2 0 1 0-4 0 2 2 0 0 0 4 0M10 17a2 2 0 1 0-4 0 2 2 0 0 0 4 0',
   balas: 'M9 14 4 9l5-5M4 9h9a7 7 0 0 1 7 7v4',
   reaksi:
     'M20.9 13a9 9 0 1 1-7.9-9.9M8.5 14.5s1.3 1.7 3.5 1.7 3.5-1.7 3.5-1.7M9 9.5h.01M15 9.5h.01M19 2v6M22 5h-6',

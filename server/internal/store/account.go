@@ -542,6 +542,27 @@ func (s *Store) RevokeSession(ctx context.Context, sessionID, userID uuid.UUID) 
 	return hash, nil
 }
 
+// RevokeOtherSessions mencabut semua sesi milik seseorang KECUALI yang sedang
+// dipakai bertanya, dan mengembalikan jumlah yang tercabut.
+//
+// Sampai sekarang jalan menuju keadaan ini cuma satu: mengganti password. Itu
+// menuntut orang yang kehilangan laptopnya menukar sesuatu yang tidak perlu
+// ditukar — password yang masih rahasia — demi sesuatu yang lain, dan sesudahnya
+// dia harus masuk lagi di setiap perangkat yang masih dia pegang.
+//
+// Bedanya dengan ChangePassword hanya itu: di sana pencabutan adalah akibat,
+// di sini dia yang diminta. Keduanya memakai penyaring yang sama persis, dan
+// keduanya sama-sama belum memutus koneksi WebSocket yang sudah terbuka —
+// pemanggil yang mengurusnya lewat hub.
+func (s *Store) RevokeOtherSessions(ctx context.Context, userID uuid.UUID, keep []byte) (int64, error) {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2`, userID, keep)
+	if err != nil {
+		return 0, fmt.Errorf("cabut sesi lain: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 // ---------- status ----------
 
 // SetStatus memasang status yang dinyatakan seseorang dengan sengaja.

@@ -109,6 +109,11 @@
 
   --color-call: oklch(0.8 0.145 72);
   --color-call-soft: oklch(0.33 0.055 70);
+  /* Tinta mangga tetap GELAP di tema gelap, dan itu bukan kelalaian: dia hanya
+     pernah dipakai di atas `bg-call` yang terang — sebutan (@) dan titik status
+     "tidak di tempat". Di atas `bg-call-soft` yang ikut gelap, pasangan ini
+     turun ke 1,2:1; itu bukan pasangan yang sah, dan tidak ada lagi yang
+     memakainya. */
   --color-call-ink: oklch(0.38 0.1 62);
 
   --color-danger: oklch(0.7 0.16 25);
@@ -145,6 +150,15 @@ body {
   line-height: 1.5;
   -webkit-text-size-adjust: 100%;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Teks contoh di kolom kosong. Bawaan Tailwind memudarkan warna huruf sampai
+   setengah, dan di tema terang itu jatuh ke 2,97:1 — di bawah ambang yang
+   dijanjikan halaman ini. Warna redup yang sudah dihitung dipakai sebagai
+   gantinya. */
+::placeholder {
+  color: var(--color-muted);
+  opacity: 1;
 }
 
 /* Satu cincin fokus untuk seluruh aplikasi, dan hanya untuk yang berpindah
