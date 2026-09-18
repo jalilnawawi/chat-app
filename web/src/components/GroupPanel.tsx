@@ -3,7 +3,7 @@ import { ApiError, api } from '../api';
 import { useStore } from '../store';
 import type { Conversation, User } from '../types';
 import Avatar from './Avatar';
-import Icon from './Icon';
+import PanelShell from './ui/PanelShell';
 
 /**
  * Panel kelola grup.
@@ -83,25 +83,40 @@ export default function GroupPanel({
     void run(() => renameGroup(conversation.id, next));
   };
 
-  return (
-    // Di layar sempit panel ini MENUTUPI percakapan, bukan mendesaknya:
-    // tiga kolom berdampingan di lebar 360px berarti ketiganya tidak
-    // terbaca. Di layar lebar dia kembali jadi kolom di sebelah kanan.
-    <aside
-      className="fixed inset-0 z-30 flex w-full flex-col bg-surface md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-line"
-    >
-      <header className="flex items-center justify-between border-b border-line px-4 py-3">
-        <h3 className="text-[15px] font-bold">Kelola grup</h3>
-        <button
-          onClick={onClose}
-          aria-label="Tutup panel grup"
-          className="grid size-9 place-items-center rounded-xl text-muted transition hover:bg-canvas hover:text-ink"
+  const kaki = (
+    <>
+      {error && (
+        <p
+          role="alert"
+          className="border-t border-line bg-danger-soft px-4 py-2.5 text-[13px] text-danger"
         >
-          <Icon name="tutup" size={18} />
-        </button>
-      </header>
+          {error}
+        </p>
+      )}
 
-      <div className="flex-1 overflow-y-auto">
+      <footer className="border-t border-line px-4 py-3">
+        <button
+          disabled={busy}
+          onClick={() => void run(() => leaveGroup(conversation.id))}
+          className="min-h-11 w-full rounded-xl border border-line-strong px-3 text-sm font-semibold text-danger transition hover:border-danger hover:bg-danger-soft disabled:border-line disabled:text-muted"
+        >
+          Keluar dari grup
+        </button>
+        {iAmOwner && members.length > 1 && (
+          // Dikatakan di muka, bukan dijelaskan setelah orangnya terlanjur
+          // keluar: kepemilikan yang berpindah diam-diam adalah kejutan, dan
+          // kejutan pada tindakan yang tidak bisa dibatalkan selalu terasa
+          // seperti kesalahan aplikasi.
+          <p className="mt-2 text-center text-[11.5px] text-muted">
+            Kepemilikan pindah ke anggota terlama
+          </p>
+        )}
+      </footer>
+    </>
+  );
+
+  return (
+    <PanelShell title="Kelola grup" closeLabel="Tutup panel grup" onClose={onClose} footer={kaki}>
         <section className="border-b border-line px-4 py-3">
           <label className="mb-1.5 block text-[13px] font-semibold text-muted">Judul</label>
           {iAmOwner ? (
@@ -116,7 +131,12 @@ export default function GroupPanel({
                   e.preventDefault();
                   saveTitle();
                 }
-                if (e.key === 'Escape') setTitle(conversation.title ?? '');
+                if (e.key === 'Escape') {
+                  // Membatalkan ketikan, bukan menutup panel: yang menekan
+                  // Escape di dalam kolom sedang membatalkan kalimatnya.
+                  e.preventDefault();
+                  setTitle(conversation.title ?? '');
+                }
               }}
               className="w-full rounded-xl border border-line-strong bg-canvas px-3.5 py-2.5 text-[15px] outline-none transition focus:bg-surface disabled:opacity-50"
             />
@@ -190,7 +210,7 @@ export default function GroupPanel({
                       mengeluarkan dirinya sendiri lewat sini akan meninggalkan
                       grup tanpa pemilik. Jalan keluarnya ada di bawah. */}
                   {iAmOwner && !isMe && m.role !== 'owner' && (
-                    <span className="flex shrink-0 gap-1 opacity-0 transition group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+                    <span className="flex shrink-0 gap-1 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
                       <button
                         disabled={busy}
                         title={`Jadikan ${m.displayName} pemilik grup`}
@@ -216,30 +236,6 @@ export default function GroupPanel({
             })}
           </ul>
         </section>
-      </div>
-
-      {error && (
-        <p className="border-t border-line bg-danger-soft px-4 py-2.5 text-[13px] text-danger">{error}</p>
-      )}
-
-      <footer className="border-t border-line px-4 py-3">
-        <button
-          disabled={busy}
-          onClick={() => void run(() => leaveGroup(conversation.id))}
-          className="w-full rounded-xl border border-line-strong px-3 py-2.5 text-sm font-semibold text-danger transition hover:border-danger hover:bg-danger-soft disabled:opacity-50"
-        >
-          Keluar dari grup
-        </button>
-        {iAmOwner && members.length > 1 && (
-          // Dikatakan di muka, bukan dijelaskan setelah orangnya terlanjur
-          // keluar: kepemilikan yang berpindah diam-diam adalah kejutan, dan
-          // kejutan pada tindakan yang tidak bisa dibatalkan selalu terasa
-          // seperti kesalahan aplikasi.
-          <p className="mt-2 text-center text-[11.5px] text-muted">
-            Kepemilikan pindah ke anggota terlama
-          </p>
-        )}
-      </footer>
-    </aside>
+    </PanelShell>
   );
 }

@@ -1,12 +1,15 @@
 import { useState } from 'react';
-import { api } from '../api';
-import { unsubscribeThisDevice, usePush } from '../push';
 import { useStore } from '../store';
 import type { Conversation } from '../types';
-import Avatar, { dotFor, statusLabel } from './Avatar';
+import Avatar, { dotFor } from './Avatar';
 import Icon from './Icon';
 import NewChatDialog from './NewChatDialog';
+import StatusMenu from './StatusMenu';
+import IconButton from './ui/IconButton';
 import { attachmentsText } from '../format';
+
+/** Panel yang menempati kolom kanan; undefined berarti tidak ada yang terbuka. */
+export type PanelAktif = 'profil' | 'akun' | 'preferensi';
 
 /** Judul percakapan: grup pakai nama grup, DM pakai nama lawan bicara. */
 export function conversationTitle(c: Conversation): string {
@@ -81,15 +84,16 @@ function waktuRingkas(iso: string): string {
 
 export default function Sidebar({
   hiddenOnMobile,
-  accountOpen,
-  onToggleAccount,
+  panel,
+  onPanel,
   searchOpen,
   onSearch,
 }: {
   /** Layar sempit hanya memuat satu kolom; saat percakapan terbuka, ini yang mengalah. */
   hiddenOnMobile: boolean;
-  accountOpen: boolean;
-  onToggleAccount: () => void;
+  panel: PanelAktif | undefined;
+  /** Menekan panel yang sedang terbuka menutupnya. */
+  onPanel: (p: PanelAktif) => void;
   searchOpen: boolean;
   onSearch: () => void;
 }) {
@@ -100,20 +104,8 @@ export default function Sidebar({
   const statuses = useStore(s => s.statuses);
   const connected = useStore(s => s.connected);
   const openConversation = useStore(s => s.openConversation);
-  const reset = useStore(s => s.reset);
 
   const [dialogOpen, setDialogOpen] = useState(false);
-  const push = usePush();
-
-  async function logout() {
-    // Langganan notifikasi dicabut SEBELUM sesinya dibuang — pencabutan itu
-    // sendiri butuh sesi yang masih berlaku. Tanpa ini, langganan orang ini
-    // tetap hidup di komputer yang dipakai bergantian, dan pratinjau pesannya
-    // terus muncul di layar kunci orang berikutnya.
-    await unsubscribeThisDevice();
-    await api.logout().catch(() => {});
-    reset();
-  }
 
   return (
     <aside
@@ -121,68 +113,49 @@ export default function Sidebar({
         hiddenOnMobile ? 'hidden' : 'flex'
       }`}
     >
-      <header className="flex items-center gap-1 border-b border-line px-3 py-3">
-        {/* Kepala sidebar adalah satu tombol: menekan foto atau nama sendiri
-            membuka panel akun. Itu tempat yang sudah dicari orang lebih dulu,
-            jauh sebelum mereka mencari ikon roda gigi. */}
-        <button
-          onClick={onToggleAccount}
-          aria-pressed={accountOpen}
-          title="Kelola akun kamu"
-          className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition ${
-            accountOpen ? 'bg-accent-soft' : 'hover:bg-canvas'
-          }`}
-        >
-          <Avatar
-            name={me?.displayName ?? '?'}
-            url={me?.avatarUrl}
-            size={36}
-            dot={dotFor(connected, me?.status)}
-          />
-          <span className="min-w-0">
-            <span className="block truncate text-[15px] font-bold">{me?.displayName}</span>
-            <span className="block truncate text-[13px] text-muted">
-              {/* Status yang dipasang sendiri menggantikan keterangan koneksi:
-                  yang pertama dinyatakan orangnya dengan sengaja, yang kedua
-                  cuma kabar tentang jaringan. */}
-              {statusLabel(me?.status, me?.statusText, me?.statusExpiresAt) ||
-                (connected ? 'Tersambung' : 'Menyambungkan ulang…')}
-            </span>
-          </span>
-        </button>
+      {/* Kepala sidebar membuka TIGA panel, bukan satu.
+          Foto dan nama sendiri membuka profil — tempat yang sudah dicari orang
+          lebih dulu, jauh sebelum mereka mencari ikon. Dua ikon di sebelahnya
+          untuk yang jarang: kunci akun, lalu preferensi perangkat ini.
 
-        <div className="flex shrink-0 items-center gap-0.5">
-          {/* Tombol notifikasi hanya muncul kalau memang ada yang bisa
-              dilakukan: browser mendukungnya DAN server menyalakannya. Tombol
-              yang selalu ada tapi kadang tidak berefek lebih buruk daripada
-              tombol yang tidak ada. */}
-          {push.supported && push.available && (
-            <button
-              onClick={push.toggle}
-              disabled={push.busy || push.blocked}
-              title={
-                push.blocked
-                  ? 'Izin notifikasi diblokir di pengaturan browser'
-                  : push.enabled
-                    ? 'Matikan notifikasi'
-                    : 'Nyalakan notifikasi saat aplikasi ditutup'
-              }
-              aria-label={push.enabled ? 'Matikan notifikasi' : 'Nyalakan notifikasi'}
-              className={`grid size-10 place-items-center rounded-xl transition hover:bg-canvas disabled:opacity-40 ${
-                push.enabled ? 'text-accent-text' : 'text-muted'
-              }`}
-            >
-              <Icon name={push.enabled ? 'lonceng' : 'lonceng-mati'} />
-            </button>
-          )}
+          Baris status berdiri sendiri di bawahnya, dan itu bukan pilihan gaya:
+          dia harus bisa ditekan, dan tombol di dalam tombol bukan sesuatu yang
+          boleh ditulis. */}
+      <header className="border-b border-line px-3 py-2.5">
+        <div className="flex items-center gap-1">
           <button
-            onClick={logout}
-            aria-label="Keluar dari akun"
-            title="Keluar"
-            className="grid size-10 place-items-center rounded-xl text-muted transition hover:bg-canvas hover:text-ink"
+            onClick={() => onPanel('profil')}
+            aria-pressed={panel === 'profil'}
+            title="Profil kamu"
+            className={`flex min-h-10 min-w-0 flex-1 items-center gap-2.5 rounded-xl px-2 text-left transition ${
+              panel === 'profil' ? 'bg-accent-soft' : 'hover:bg-canvas'
+            }`}
           >
-            <Icon name="keluar" />
+            <Avatar
+              name={me?.displayName ?? '?'}
+              url={me?.avatarUrl}
+              size={36}
+              dot={dotFor(connected, me?.status)}
+            />
+            <span className="min-w-0 truncate text-[15px] font-bold">{me?.displayName}</span>
           </button>
+
+          <IconButton
+            icon="kunci"
+            label="Akun: email, password, perangkat"
+            pressed={panel === 'akun'}
+            onClick={() => onPanel('akun')}
+          />
+          <IconButton
+            icon="setelan"
+            label="Preferensi perangkat ini"
+            pressed={panel === 'preferensi'}
+            onClick={() => onPanel('preferensi')}
+          />
+        </div>
+
+        <div className="mt-0.5">
+          <StatusMenu onOpenProfile={() => onPanel('profil')} />
         </div>
       </header>
 

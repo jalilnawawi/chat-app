@@ -247,13 +247,23 @@ export default function MessageMenu({
         aria-expanded={open}
         data-menu-trigger=""
         title="Tindakan pesan (klik kanan juga bisa)"
-        className={`absolute top-1 right-1 z-[1] grid size-7 place-items-center rounded-full transition before:absolute before:-top-1.5 before:-right-1.5 before:-bottom-0.5 before:-left-1.5 before:content-[''] [@media(pointer:coarse)]:before:-inset-2 ${
+        className={`aksi-pesan absolute top-1 right-1 z-[1] grid size-7 place-items-center rounded-full transition before:absolute before:-top-1.5 before:-right-1.5 before:-bottom-0.5 before:-left-1.5 before:content-[''] [@media(pointer:coarse)]:before:-inset-2 ${
           mine ? 'bg-accent text-accent-ink hover:bg-accent-ink/15' : 'bg-surface text-muted hover:bg-canvas hover:text-ink'
-          // Selalu terlihat, redup saat diam: tindakan yang harus dicari dengan
-          // kursor dulu tidak pernah ditemukan sebagian penggunanya. Menyala
-          // penuh saat BARIS pesannya disentuh kursor — cakupan yang sama
-          // dengan tombol reaksi — atau saat difokus.
-        } ${open ? 'opacity-100' : 'opacity-80 group-hover:opacity-100 focus-visible:opacity-100'}`}
+          // Tersembunyi saat diam, muncul saat gelembungnya disentuh kursor —
+          // cakupan yang sama dengan tombol reaksi, sehingga keduanya datang
+          // dan pergi bersama. Ruangnya tetap dipesan `MenuCornerSpacer`, jadi
+          // kalimatnya tidak bergeser saat dia muncul.
+          //
+          // Yang tak terlihat tetap harus bisa dijangkau: dia tampil saat
+          // difokus, saat barisnya difokus lewat papan ketik (lihat
+          // `.aksi-pesan` di index.css), dan selalu tampil di layar sentuh —
+          // di sana tidak ada kursor yang bisa memunculkannya, dan
+          // `group-hover` Tailwind hidup di dalam @media (hover: hover).
+        } ${
+          open
+            ? 'opacity-100'
+            : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100'
+        }`}
       >
         <Icon name="buka-menu" size={18} className={`transition ${open ? 'rotate-180' : ''}`} />
       </button>

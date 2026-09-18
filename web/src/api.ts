@@ -157,6 +157,17 @@ export const api = {
   revokeSession: (id: string) =>
     request<{ status: string }>(`/api/account/sessions/${id}`, { method: 'DELETE' }),
 
+  /**
+   * Mengeluarkan semua perangkat kecuali yang ini.
+   *
+   * Sengaja tidak menuntut password: satu-satunya kerugian yang bisa
+   * ditimbulkan orang asing lewat sini adalah mengeluarkan perangkat
+   * pemiliknya, dan pemiliknya tinggal masuk lagi. Menuntut password justru
+   * menahan orang yang sedang buru-buru mengusir perangkat yang hilang.
+   */
+  revokeOtherSessions: () =>
+    request<{ revoked: number }>('/api/account/sessions', { method: 'DELETE' }),
+
   removeAvatar: () => request<Me>('/api/account/avatar', { method: 'DELETE' }),
 
   /**

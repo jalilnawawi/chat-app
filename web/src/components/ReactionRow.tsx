@@ -113,12 +113,15 @@ export function ReactionButton({
 
   return (
     <div ref={boxRef} className="contents">
-      {/* Muncul saat kursor ada di pesannya, kecuali kalau papannya sedang
+      {/* Muncul saat kursor ada di gelembungnya, kecuali kalau papannya sedang
           terbuka — kalau tidak, dia hilang persis saat kursor bergerak ke
-          arah pilihannya. Di perangkat tanpa kursor dia selalu tampil:
-          `group-hover` di Tailwind v4 hidup di dalam @media (hover: hover),
-          dan tanpa syarat kedua seluruh fitur reaksi tak terjangkau dari
-          ponsel. */}
+          arah pilihannya. Baris yang difokus lewat papan ketik memunculkannya
+          juga, lewat `.aksi-pesan` di index.css.
+
+          Di layar sentuh dia tidak ada sama sekali: `group-hover` di Tailwind
+          v4 hidup di dalam @media (hover: hover), jadi di sana dia tak akan
+          pernah muncul — dan reaksi cepat sudah punya rumahnya sendiri di
+          baris teratas lembar tindakan. */}
       <button
         ref={trigger}
         type="button"
@@ -129,7 +132,7 @@ export function ReactionButton({
         aria-label={label}
         aria-expanded={open !== null}
         title="Beri reaksi"
-        className={`grid size-9 shrink-0 place-items-center self-center rounded-full text-muted transition hover:bg-surface hover:text-accent-text focus-visible:opacity-100 [@media(pointer:coarse)]:size-11 ${
+        className={`aksi-pesan grid size-9 shrink-0 place-items-center self-center rounded-full text-muted transition hover:bg-surface hover:text-accent-text focus-visible:opacity-100 [@media(pointer:coarse)]:size-11 ${
           open
             ? 'bg-surface text-accent-text opacity-100'
             : // Di layar sentuh tombol ini tidak ada: reaksi cepat tinggal di

@@ -5,9 +5,11 @@ import { useStore } from './store';
 import { pantauSistem } from './tema';
 import { useSocket } from './useSocket';
 import AuthPage from './components/AuthPage';
-import Sidebar from './components/Sidebar';
+import Sidebar, { type PanelAktif } from './components/Sidebar';
 import ChatPanel from './components/ChatPanel';
-import AccountPanel from './components/AccountPanel';
+import ProfilePanel from './components/ProfilePanel';
+import AkunPanel from './components/AkunPanel';
+import PreferensiPanel from './components/PreferensiPanel';
 import SearchPanel from './components/SearchPanel';
 import Icon from './components/Icon';
 import Tanda from './components/Tanda';
@@ -19,10 +21,17 @@ export default function App() {
   const loadConfig = useStore(s => s.loadConfig);
   const loadConversations = useStore(s => s.loadConversations);
   const [checking, setChecking] = useState(true);
-  const [accountOpen, setAccountOpen] = useState(false);
+  /**
+   * Panel kanan yang sedang terbuka: profil, akun, atau preferensi.
+   *
+   * Satu nilai, bukan tiga saklar. Ketiganya menempati kolom yang sama, jadi
+   * keadaan "dua terbuka sekaligus" bukan sesuatu yang perlu bisa diwakili —
+   * dan yang tidak bisa diwakili tidak perlu dijaga supaya tidak terjadi.
+   */
+  const [panel, setPanel] = useState<PanelAktif | undefined>(undefined);
   /**
    * Panel pencarian: undefined = tertutup, null = semua percakapan, string =
-   * satu percakapan. Panel akun dan panel pencarian menempati kolom yang sama,
+   * satu percakapan. Panel kanan dan panel pencarian menempati kolom yang sama,
    * jadi membuka yang satu menutup yang lain.
    */
   const [search, setSearch] = useState<string | null | undefined>(undefined);
@@ -160,25 +169,27 @@ export default function App() {
       <div className="flex min-h-0 flex-1">
         <Sidebar
           hiddenOnMobile={activeId !== null}
-          accountOpen={accountOpen}
-          onToggleAccount={() => {
+          panel={panel}
+          onPanel={p => {
             setSearch(undefined);
-            setAccountOpen(v => !v);
+            setPanel(v => (v === p ? undefined : p));
           }}
           searchOpen={search !== undefined}
           onSearch={() => {
-            setAccountOpen(false);
+            setPanel(undefined);
             setSearch(v => (v === undefined ? null : undefined));
           }}
         />
         <ChatPanel
           send={socket.send}
           onSearch={id => {
-            setAccountOpen(false);
+            setPanel(undefined);
             setSearch(id);
           }}
         />
-        {accountOpen && <AccountPanel onClose={() => setAccountOpen(false)} />}
+        {panel === 'profil' && <ProfilePanel onClose={() => setPanel(undefined)} />}
+        {panel === 'akun' && <AkunPanel onClose={() => setPanel(undefined)} />}
+        {panel === 'preferensi' && <PreferensiPanel onClose={() => setPanel(undefined)} />}
         {search !== undefined && (
           <SearchPanel scope={search} onScope={setSearch} onClose={() => setSearch(undefined)} />
         )}

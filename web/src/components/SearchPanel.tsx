@@ -4,6 +4,7 @@ import { useStore } from '../store';
 import type { SearchHit } from '../types';
 import Avatar from './Avatar';
 import Icon from './Icon';
+import PanelShell from './ui/PanelShell';
 import { excerpt } from '../format';
 import { conversationTitle } from './Sidebar';
 
@@ -117,24 +118,12 @@ export default function SearchPanel({
   async function open(hit: SearchHit) {
     // Di layar sempit panel ini menutupi percakapan; hasil yang ditekan tidak
     // akan terlihat mendarat kalau panelnya tetap di atasnya.
-    if (window.matchMedia('(max-width: 767px)').matches) onClose();
+    if (window.matchMedia('(max-width: 1023px)').matches) onClose();
     await jumpTo(hit.message.conversationId, hit.message.id, hit.message.seq);
   }
 
-  return (
-    <aside className="fixed inset-0 z-30 flex w-full flex-col bg-surface md:static md:z-auto md:w-96 md:shrink-0 md:border-l md:border-line">
-      <header className="flex items-center justify-between border-b border-line px-4 py-3">
-        <h3 className="text-[15px] font-bold">Cari pesan</h3>
-        <button
-          onClick={onClose}
-          aria-label="Tutup pencarian"
-          className="grid size-9 place-items-center rounded-xl text-muted transition hover:bg-canvas hover:text-ink"
-        >
-          <Icon name="tutup" size={18} />
-        </button>
-      </header>
-
-      <div className="border-b border-line px-4 py-3">
+  const kotak = (
+    <div className="border-b border-line px-4 py-3">
         <div className="relative">
           <span className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-muted">
             <Icon name="cari" size={18} />
@@ -164,9 +153,18 @@ export default function SearchPanel({
             </Chip>
           </div>
         )}
-      </div>
+    </div>
+  );
 
-      <div className="flex-1 overflow-y-auto" aria-live="polite" aria-busy={state === 'loading'}>
+  return (
+    <PanelShell
+      title="Cari pesan"
+      closeLabel="Tutup pencarian"
+      onClose={onClose}
+      width="w-96"
+      toolbar={kotak}
+    >
+      <div aria-live="polite" aria-busy={state === 'loading'}>
         {state === 'idle' && (
           <div className="px-5 py-8 text-center">
             <p className="text-sm font-semibold">Ketik kata yang diingat</p>
@@ -246,7 +244,7 @@ export default function SearchPanel({
           </div>
         )}
       </div>
-    </aside>
+    </PanelShell>
   );
 }
 

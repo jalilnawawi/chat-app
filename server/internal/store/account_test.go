@@ -488,6 +488,42 @@ func TestGantiPasswordMembuangTautanPemulihanYangMenggantung(t *testing.T) {
 	}
 }
 
+// Mengeluarkan semua perangkat lain menyisakan TEPAT SATU: yang sedang dipakai
+// meminta. Perangkat yang mengusir dirinya sendiri di sini akan membuat orangnya
+// terlempar keluar justru saat dia sedang mengamankan akunnya.
+func TestCabutSesiLainMenyisakanSesiIni(t *testing.T) {
+	s, ctx := newStore(t)
+	me := newUser(t, s, ctx, "Kehilangan Ponsel")
+	tetangga := newUser(t, s, ctx, "Tetangga")
+
+	ini := buatSesi(t, s, ctx, me.ID, "laptop")
+	buatSesi(t, s, ctx, me.ID, "ponsel")
+	buatSesi(t, s, ctx, me.ID, "tablet")
+	buatSesi(t, s, ctx, tetangga.ID, "laptop-tetangga")
+
+	jumlah, err := s.RevokeOtherSessions(ctx, me.ID, ini)
+	if err != nil {
+		t.Fatalf("cabut sesi lain: %v", err)
+	}
+	if jumlah != 2 {
+		t.Errorf("mau 2 sesi tercabut, dapat %d", jumlah)
+	}
+
+	sisa, err := s.Sessions(ctx, me.ID, uuid.Nil)
+	if err != nil {
+		t.Fatalf("daftar sesi: %v", err)
+	}
+	if len(sisa) != 1 || sisa[0].UserAgent != "laptop" {
+		t.Fatalf("mau tersisa hanya sesi ini, dapat %+v", sisa)
+	}
+
+	// Sesi orang lain tidak boleh ikut terbawa.
+	milikTetangga, err := s.Sessions(ctx, tetangga.ID, uuid.Nil)
+	if err != nil || len(milikTetangga) != 1 {
+		t.Fatalf("sesi orang lain ikut tercabut: %v (%d)", err, len(milikTetangga))
+	}
+}
+
 // Id sesi yang bocor dari mana pun tidak boleh bisa dipakai mengeluarkan orang
 // lain dari aplikasinya.
 func TestSesiMilikOrangLainTidakBisaDicabut(t *testing.T) {
