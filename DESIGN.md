@@ -393,6 +393,12 @@ Satu baris di semua layar: di layar lebar judul "Disematkan" teal tebal duduk di
 ### Salinan dan kabar singkat
 "Teks disalin." dan kabar sejenis tampil 2.5 detik sebagai bilah Kertas dengan centang Berhasil; kabar peringatan memakai ikon peringatan Bahaya. Keduanya diumumkan lewat wilayah status yang selalu terpasang.
 
+### Pemutar pesan suara (Signature)
+Bukan `<audio controls>`: lingkaran putar 40px, bentuk gelombang di tengah, dan tombol kecepatan `1×`/`1,5×`/`2×` di kanan, dengan durasi (atau posisi selama diputar) di bawah gelombang bersama ikon mikrofon. Lebarnya tetap (`w-68`) tapi tidak pernah melebihi gelembungnya.
+- **Bentuk gelombang:** 40 batang selebar 3px dengan celah 1px, tinggi maksimum 24px dan minimum 2px — sama dengan batang bilah perekam, karena keduanya menggambar hal yang sama. Batang yang sudah lewat berwarna penuh (Putih di Atas Teal / Teal Laguna), sisanya diredupkan (putih 45% / Garis Batas 55%).
+- Gelombang adalah lapisan gambar di BELAKANG `<input type="range">` yang menutupi kotak yang sama; penunjuk posisinya garis tegak 3px setinggi gelombang, bukan kelereng. Seret, panah papan ketik, dan pembacaan posisi tetap milik penggeser itu.
+- Rekaman tanpa gelombang — berkas audio yang diunggah dari disk — memakai penggeser polos dengan jalur dan bulatan bawaan.
+
 ### Conversation States
 - **Memuat:** kerangka lima gelembung diam (tanpa kilau), teal lembut untuk sisi sendiri dan garis untuk sisi orang.
 - **Kosong:** avatar 64px, nama 17px tebal, kalimat sapaan 15px, dan petunjuk tombol `kbd` (Enter kirim, Shift + Enter baris baru, tempel gambar bila lampiran aktif).

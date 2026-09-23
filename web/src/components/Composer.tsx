@@ -138,14 +138,14 @@ export default function Composer({
   const recordingFor = useRef<{ conversationId: string; send: boolean } | null>(null);
 
   const onRecorded = useCallback(
-    ({ file, durationMs }: Recording) => {
+    ({ file, durationMs, peaks }: Recording) => {
       const target = recordingFor.current;
       recordingFor.current = null;
       if (!target) return;
       // Rekaman masuk laci lampiran seperti berkas lain — unggahan, kemajuan,
       // dan coba-lagi-nya sama. Kalau unggahannya gagal, dia tetap di laci
       // dengan tombol coba lagi, dan tidak ada yang hilang.
-      const [key] = addFiles(target.conversationId, [file], durationMs);
+      const [key] = addFiles(target.conversationId, [file], { durationMs, peaks });
       // Dikirim sendiri hanya kalau orangnya menekan kirim DAN masih berada di
       // percakapan yang sama. Rekaman yang terhenti karena berpindah ruang
       // menunggu di laci percakapan asalnya.

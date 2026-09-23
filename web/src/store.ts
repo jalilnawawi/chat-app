@@ -203,10 +203,14 @@ type State = {
   transferOwnership: (conversationId: string, userId: string) => Promise<void>;
   leaveGroup: (conversationId: string) => Promise<void>;
   /**
-   * Mengembalikan kunci tiap unggahan yang diterima laci. `durationMs` hanya
-   * untuk rekaman suara, dan hanya bila berkasnya satu.
+   * Mengembalikan kunci tiap unggahan yang diterima laci. `rekaman` hanya untuk
+   * pesan suara dari dalam aplikasi, dan hanya bila berkasnya satu.
    */
-  addFiles: (conversationId: string, files: File[], durationMs?: number) => string[];
+  addFiles: (
+    conversationId: string,
+    files: File[],
+    rekaman?: { durationMs: number; peaks: string | null },
+  ) => string[];
   retryUpload: (conversationId: string, key: string) => void;
   removeUpload: (conversationId: string, key: string) => void;
   retryMessage: (conversationId: string, pendingId: string) => Promise<void>;
@@ -985,7 +989,7 @@ export const useStore = create<State>((set, get) => ({
     get().applyConversationRemoved(conversationId);
   },
 
-  addFiles: (conversationId, files, durationMs) => {
+  addFiles: (conversationId, files, rekaman) => {
     const existing = get().uploads[conversationId] ?? [];
     const room = MAX_ATTACHMENTS - existing.length;
     if (room <= 0) return [];
@@ -1002,7 +1006,8 @@ export const useStore = create<State>((set, get) => ({
         name: file.name,
         size: file.size,
         mime: file.type,
-        durationMs,
+        durationMs: rekaman?.durationMs,
+        peaks: rekaman?.peaks ?? undefined,
         // Pratinjau dibuat dari berkas LOKAL, bukan dari alamat di server.
         // Gambarnya muncul seketika, bahkan sebelum satu byte pun terkirim.
         previewUrl: isImage ? URL.createObjectURL(file) : null,
@@ -1020,7 +1025,7 @@ export const useStore = create<State>((set, get) => ({
         uploads: { ...s.uploads, [conversationId]: [...(s.uploads[conversationId] ?? []), entry] },
       }));
 
-      if (entry.status === 'uploading') void upload(set, get, conversationId, key, file, durationMs);
+      if (entry.status === 'uploading') void upload(set, get, conversationId, key, file, entry);
       keys.push(key);
     }
     return keys;
@@ -1031,7 +1036,7 @@ export const useStore = create<State>((set, get) => ({
     if (!entry || !files.has(key)) return;
 
     patchUpload(set, conversationId, key, { status: 'uploading', progress: 0, error: null });
-    void upload(set, get, conversationId, key, files.get(key)!, entry.durationMs);
+    void upload(set, get, conversationId, key, files.get(key)!, entry);
   },
 
   removeUpload: (conversationId, key) => {
@@ -1540,13 +1545,17 @@ async function upload(
   conversationId: string,
   key: string,
   file: File,
-  durationMs?: number,
+  // Entri lacinya sendiri, bukan angka-angkanya satu per satu: yang menempel
+  // pada sebuah rekaman bertambah tiap fase, dan daftar parameter yang tumbuh
+  // adalah daftar yang suatu hari terlewat satu di jalur coba-lagi.
+  rekaman: { durationMs?: number; peaks?: string },
 ) {
   files.set(key, file);
 
   try {
     const size = await imageSize(file);
-    const attachment = await api.uploadAttachment(file, { ...size, durationMs }, fraction => {
+    const meta = { ...size, durationMs: rekaman.durationMs, peaks: rekaman.peaks };
+    const attachment = await api.uploadAttachment(file, meta, fraction => {
       // Unggahan bisa dibatalkan sementara byte-nya masih mengalir. Menulis
       // kemajuan ke entri yang sudah tidak ada akan menghidupkannya kembali.
       if ((get().uploads[conversationId] ?? []).some(u => u.key === key)) {

@@ -271,3 +271,48 @@ body {
     opacity: 0.7;
   }
 }
+
+/**
+ * Penggeser posisi yang memakai bentuk gelombang sebagai jalurnya.
+ *
+ * Yang digambar di belakang adalah 40 batang; yang menerima jari, papan ketik,
+ * dan pembaca layar tetap `<input type="range">` yang sama seperti sebelum
+ * Fase 15 — hanya jalur dan bulatannya yang dilepas. Menggambar gelombang
+ * sebagai tombol atau div berarti menulis ulang seret, panah kiri-kanan,
+ * Home/End, dan pengumuman posisi dengan tangan, dan empat-empatnya sudah ada
+ * di sini tanpa satu baris pun.
+ *
+ * Bulatannya jadi garis tegak setinggi gelombang: penunjuk posisi pada bentuk
+ * gelombang adalah garis, bukan kelereng yang menutupi tiga batang di bawahnya.
+ */
+.gelombang {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+}
+
+.gelombang::-webkit-slider-runnable-track {
+  height: 26px;
+  background: transparent;
+}
+
+.gelombang::-moz-range-track {
+  height: 26px;
+  background: transparent;
+}
+
+.gelombang::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 3px;
+  height: 26px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.gelombang::-moz-range-thumb {
+  width: 3px;
+  height: 26px;
+  border: 0;
+  border-radius: 2px;
+  background: currentColor;
+}

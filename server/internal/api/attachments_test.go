@@ -407,3 +407,36 @@ func TestDurationHanyaUntukSuaraDanDalamJangkauan(t *testing.T) {
 		}
 	}
 }
+
+// Bentuk gelombang datang dari client, jadi yang diperiksa server adalah
+// BENTUKNYA, bukan kebenaran angkanya: 40 karakter base64url, dan hanya pada
+// suara. Pemeriksaan yang longgar di sini berarti string apa pun yang dikirim
+// orang tersimpan di kolom yang isinya digambar langsung ke layar penerima.
+func TestPeaksHanyaUntukSuaraDanTepat40Karakter(t *testing.T) {
+	q := func(p string) url.Values { return url.Values{"p": {p}} }
+	sah := strings.Repeat("A", 20) + strings.Repeat("_", 10) + strings.Repeat("9", 9) + "-"
+
+	if got := peaks(q(sah), "audio/webm"); got == nil || *got != sah {
+		t.Errorf("gelombang sah terbaca %v", got)
+	}
+	buruk := []string{
+		"",
+		strings.Repeat("A", 39),
+		strings.Repeat("A", 41),
+		strings.Repeat("A", 39) + "+", // base64 biasa, bukan base64url
+		strings.Repeat("A", 39) + "/",
+		strings.Repeat("A", 39) + "=",
+		strings.Repeat("A", 39) + " ",
+		strings.Repeat("A", 39) + "<",
+	}
+	for _, bad := range buruk {
+		if got := peaks(q(bad), "audio/webm"); got != nil {
+			t.Errorf("p=%q diterima jadi %q", bad, *got)
+		}
+	}
+	for _, mt := range []string{"video/webm", "image/png", "application/pdf"} {
+		if got := peaks(q(sah), mt); got != nil {
+			t.Errorf("gelombang menempel pada %s", mt)
+		}
+	}
+}

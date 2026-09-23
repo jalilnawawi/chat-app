@@ -294,7 +294,7 @@ export const api = {
    */
   uploadAttachment: (
     file: File,
-    meta: { width?: number; height?: number; durationMs?: number },
+    meta: { width?: number; height?: number; durationMs?: number; peaks?: string },
     onProgress: (fraction: number) => void,
     signal?: AbortSignal,
   ): Promise<Attachment> =>
@@ -312,6 +312,7 @@ export const api = {
         params.set('h', String(meta.height));
       }
       if (meta.durationMs) params.set('d', String(Math.round(meta.durationMs)));
+      if (meta.peaks) params.set('p', meta.peaks);
       const query = params.toString() ? `?${params}` : '';
 
       const xhr = new XMLHttpRequest();

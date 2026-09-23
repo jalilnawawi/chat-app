@@ -53,8 +53,14 @@ menawarkan kepemilikan data dan kesederhanaan operasi ini sekaligus.
   tanpa meninggalkan tombol mati di UI.
 - Bahasa UI: Indonesia. Terjemahan belum ada, tetapi teks harus disusun supaya
   bisa diterjemahkan nanti (i18n direncanakan).
+- Belum ada integrasi pihak ketiga: tidak ada aplikasi, bot, token mesin, atau
+  mini-app. Bentuk sistemnya sudah diputuskan di `docs/integrasi.md` — sebuah
+  aplikasi adalah baris `users`, permukaannya halaman penuh di kolom utama dan
+  bukan percakapan dengan bot, dan bawaannya dia hanya menerima yang ditujukan
+  kepadanya — tetapi pekerjaannya berada di belakang daftar rilis di `TASKLIST.md`.
 - Terbuka: model pendaftaran akun untuk perusahaan (undangan, SSO, atau daftar
-  bebas) belum diputuskan.
+  bebas) belum diputuskan. Jawabannya juga yang menentukan siapa berwenang
+  memasang aplikasi pihak ketiga.
 
 ## Brand Commitments
 

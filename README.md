@@ -432,7 +432,7 @@ pesan kedua.
 
 ```bash
 cd server && go test -race ./...
-cd web && bun run typecheck
+cd web && bun run typecheck && bun test
 
 # Uji beban (kuota auth dilonggarkan karena menyiapkan ribuan sesi dari satu IP)
 RATE_AUTH_PER_MIN=100000 RATE_AUTH_BURST=2000 go run ./cmd/server
@@ -443,6 +443,11 @@ Test unit menutup hal-hal yang keliru diam-diam: fan-out dan backpressure hub,
 token bucket, percakapan dengan filer SeaweedFS, penyaringan penerima notifikasi
 (online dan peredam dering), serta penyusunan kunci penyimpanan lampiran — yang
 terakhir memastikan nama berkas kiriman tidak pernah ikut menentukan lokasi.
+
+`bun test` menutup bagian frontend yang punya jawaban benar dan salah tanpa
+perlu layar: peringkasan bentuk gelombang pesan suara (`src/gelombang.ts`),
+yang salahnya tidak terlihat sebagai galat melainkan sebagai gambar yang tidak
+cocok dengan suaranya.
 
 Fase 8 menambah empat lagi yang sifatnya sama: penguraian header `Range`
 (termasuk bentuk sufiks `bytes=-500` yang dipakai pemutar untuk membaca indeks

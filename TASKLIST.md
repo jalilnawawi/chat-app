@@ -924,7 +924,42 @@ Keputusan dan angka lengkapnya di
 - [x] `go vet` + `go test -race ./...` bersih
 - [x] `tsc --noEmit` + `vite build` bersih (353 kB, 109 kB gzip)
 
-## Fase 15 — Kandidat berikutnya
+## Fase 15 — Bentuk gelombang pesan suara
+Keputusan dan angka lengkapnya di
+[docs/pesan-suara-dan-kolom-tulis.md](docs/pesan-suara-dan-kolom-tulis.md#bentuk-gelombang-attachmentspeaks).
+
+### Data
+- [x] `attachments.peaks`: 40 batang, satu karakter base64url per batang
+      (0..63), dijaga CHECK `^[A-Za-z0-9_-]{40}$`
+- [x] Dikirim lewat `?p=` saat unggah, jalur yang sama dengan `?d=` dan `?w=&h=`
+- [x] Yang salah bentuk dibuang, bukan ditolak — gelombang yang salah bukan
+      alasan menggagalkan unggahan yang byte-nya sudah tersimpan
+- [x] Ikut ke salinan jsonb pesan, riwayat, dan salinan terusan; test store-nya
+      dibuktikan gagal lebih dulu dengan menghapus kolomnya dari
+      `copyAttachments`
+
+### Client
+- [x] `gelombang.ts`: satu tempat yang menyebut jumlah batang dan abjadnya,
+      dipakai perekam maupun pemutar
+- [x] Perekam menyimpan seluruh tingkat suara di ref (bukan state) dan
+      meringkasnya jadi 40 puncak — puncak per petak, bukan rata-rata, dan
+      tidak dinormalkan
+- [x] Gelombang digambar DI BELAKANG `<input type="range">` yang sudah ada:
+      seret, panah papan ketik, Home/End, dan pengumuman posisi tidak ditulis
+      ulang satu baris pun
+- [x] Penunjuk posisi jadi garis tegak 3px; rekaman tanpa gelombang tetap
+      memakai penggeser polos
+
+### Verifikasi
+- [x] `go vet` + `go test -race ./...` bersih
+- [x] `tsc --noEmit` + `vite build` bersih (354 kB, 109 kB gzip)
+- [x] `bun test` — 8 test untuk `encodeWaveform`/`decodeWaveform`; test pertama
+      di sisi frontend, tanpa ketergantungan baru selain `@types/bun`
+- [x] Browser (Brave headless, puppeteer-core): 40 batang hanya pada `peaks`
+      yang sah, penggeser tetap difokus dan digeser panah, diperiksa terang,
+      gelap, 1280 px, dan 360 px
+
+## Fase 16 — Kandidat berikutnya
 - [ ] Partisi `messages` — tetap ditunda, dan pemicunya tetap belum ada; rencana
       lengkapnya sudah ditulis di [docs/scaling.md](docs/scaling.md)
 - [ ] Pratinjau bingkai pertama untuk video — menuntut dekoder video di dalam
@@ -932,7 +967,12 @@ Keputusan dan angka lengkapnya di
 - [ ] Beberapa ukuran turunan (`srcset`) — satu ukuran sudah menutup selisih
       seratus kali lipat; yang kedua hanya dua kali, dengan menggandakan jumlah
       objek di penyimpanan
-- [ ] Bentuk gelombang pada pemutar pesan suara
+
+## Integrasi pihak ketiga
+Bukan fase dan bukan kandidat fase. Bentuk sistemnya sudah diputuskan, daftar
+kerjanya berdiri sendiri, dan keduanya ada di
+[docs/integrasi.md](docs/integrasi.md). Belum ada satu baris pun yang dikerjakan,
+dan seluruhnya berada di belakang daftar di bawah.
 
 ## Sebelum aplikasi ini boleh dipakai orang
 Bukan fase, melainkan daftar yang harus lunas kapan pun tujuannya berubah dari
@@ -949,3 +989,11 @@ tidak perlu ditemukan ulang nanti.
       memang jadi syaratnya. Menuntut `SMTP_URL` diisi di produksi: tanpa itu
       fiturnya mati dan orang yang lupa kehilangan akunnya selamanya.
 - [ ] Hapus akun, blokir pengguna, dan cara melaporkan penyalahgunaan
+- [ ] Siapa yang berwenang di sebuah deployment — model pendaftaran akun
+      (undangan, SSO, atau daftar bebas) dan peran admin. Dua pertanyaan yang
+      sebenarnya satu, dan jawabannya juga yang menentukan siapa boleh memasang
+      aplikasi pihak ketiga
+
+Integrasi pihak ketiga berada **di belakang** seluruh daftar ini. Membuka jalur
+untuk sistem lain ke aplikasi yang belum boleh menyentuh internet adalah urutan
+yang terbalik.

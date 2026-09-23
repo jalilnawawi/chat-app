@@ -13,6 +13,9 @@ Server hanya berubah di satu tempat — jalur unggah lampiran — dan satu kolom
 baru. Rekaman dikirim lewat jalur lampiran yang sudah ada sejak Fase 7:
 unggah, id, lalu `attachmentIds` saat mengirim pesan.
 
+Fase 15 menambah satu kolom lagi di jalur yang sama: bentuk gelombang. Lihat
+[Bentuk gelombang](#bentuk-gelombang-attachmentspeaks) di bawah.
+
 ---
 
 ## Pesan suara
@@ -97,6 +100,80 @@ untuk rekaman tanpa durasi. Penggesernya `<input type="range">` biasa, jadi
 jari, panah papan ketik, dan pembaca layar bekerja tanpa ARIA tambahan. Hanya
 satu rekaman berbunyi pada satu waktu; kecepatan 1×/1,5×/2×.
 
+### Bentuk gelombang: `attachments.peaks`
+
+**Fase 15.** Durasi menjawab "berapa lama", dan hanya itu. Yang tidak dijawabnya
+adalah di mana orangnya bicara, di mana dia diam, dan apakah rekaman lima belas
+detik itu berisi kalimat atau berisi sunyi karena mikrofonnya dibisukan dari
+perangkat. Menggeser penunjuk ke tengah rekaman tanpa bentuk adalah menebak.
+
+Sumbernya sama dengan durasi, dan karena alasan yang sama: berkasnya tidak
+menyebutnya. Membaca puncak dari sebuah WebM/Opus menuntut mendekode seluruh
+Opus — dekoder audio di dalam proses server, untuk sesuatu yang murni navigasi.
+Yang sudah memegang angkanya tanpa biaya tambahan adalah perekamnya:
+`AnalyserNode` di client sudah menghitung tingkat suara tiap 100 ms sejak Fase
+13, cuma dibuang setelah digambar di bilah perekam.
+
+| | Durasi (Fase 13) | Gelombang (Fase 15) |
+|---|---|---|
+| Kolom | `duration_ms` integer | `peaks` text |
+| Query unggahan | `?d=<ms>` | `?p=<40 karakter>` |
+| Dijaga | CHECK 1 ms–1 jam | CHECK `^[A-Za-z0-9_-]{40}$` |
+| Kosong berarti | bukan rekaman dari dalam aplikasi | pemutar memakai penggeser polos |
+
+**Bentuknya 40 batang, satu karakter base64url per batang, bernilai 0..63.**
+Empat puluh karena itu yang muat: batang 3 px dengan celah 1 px — sama dengan
+bilah perekam — di lebar yang tersisa setelah tombol putar dan tombol kecepatan.
+base64url, bukan base64 biasa, karena `+` dan `/` berubah arti di dalam query
+string. Satu kolom `text`, bukan array `smallint`: yang dibaca client selalu
+seluruhnya, tidak pernah satu elemen, dan 40 byte melewati salinan jsonb pesan
+tanpa perlu diterjemahkan di kedua ujungnya.
+
+Abjad dan jumlah batangnya disebut di satu tempat di client — `web/src/gelombang.ts`
+— karena dua ujung harus setuju tanpa pernah saling melihat: perekam yang
+menyusunnya dan pemutar yang menggambarnya.
+
+#### Yang diambil per petak adalah puncaknya, bukan rata-ratanya
+
+Rata-rata meratakan satu kalimat pendek di tengah keheningan sampai tidak
+terlihat, dan justru itulah yang paling ingin dilihat orang sebelum menggeser.
+
+Dan tidak dinormalkan ke batang tertinggi. Rekaman yang pelan memang terlihat
+pelan, dan mikrofon yang dibisukan dari perangkatnya tetap terlihat sebagai
+garis datar — sama seperti di bilah perekam, dan karena alasan yang sama.
+
+#### Yang diperiksa server adalah bentuknya, bukan kebenarannya
+
+Server tidak punya cara memeriksa apakah 40 angka itu benar-benar berasal dari
+berkas yang diunggah bersamanya. Yang bisa dijaganya adalah 40 byte dari
+himpunan karakter yang sempit, sehingga string apa pun yang menempel di kolom
+ini aman digambar dan aman dikirim ulang. Yang salah bentuk **dibuang, bukan
+ditolak** — persis seperti durasi. Gelombang yang salah bukan alasan
+menggagalkan unggahan yang byte-nya sudah tersimpan.
+
+Panjangnya persis 40, bukan paling banyak 40: gelombang separuh panjang akan
+digambar sebagai rekaman yang berakhir di tengah.
+
+#### Gelombang digambar DI BELAKANG penggeser yang sudah ada
+
+Ini keputusan aksesibilitas, bukan keputusan tata letak. Penggeser posisi sudah
+berupa `<input type="range">` sejak Fase 13, dan dari sana datang seret dengan
+jari, panah kiri-kanan, Home/End, dan pengumuman posisi — empat-empatnya tanpa
+satu baris ARIA. Menggambar gelombang sebagai tombol atau `div` berarti menulis
+ulang keempatnya dengan tangan.
+
+Jadi 40 batang duduk di lapisan `pointer-events: none` di belakang penggeser
+yang menutupi kotak yang sama persis. Yang dilepas dari penggesernya hanya
+jalur dan bulatannya (`.gelombang` di `index.css`); bulatannya diganti garis
+tegak setinggi gelombang, karena penunjuk posisi pada bentuk gelombang adalah
+garis, bukan kelereng yang menutupi tiga batang di bawahnya. Cincin fokus
+aplikasi tetap berlaku apa adanya.
+
+Batang yang sudah lewat memakai warna penuh, sisanya diredupkan: putih dan
+putih 45% di gelembung sendiri, teal dan Garis Batas 55% di gelembung orang.
+Batang terpendek 2 px — diam di tengah rekaman adalah garis tipis yang tetap
+terlihat, bukan lubang.
+
 ---
 
 ## Kolom tulis dan emoji
@@ -148,10 +225,23 @@ Headless Brave melaporkan `hover: none`, jadi tombol reaksi yang tersembunyi
 sampai kursor lewat tidak bisa diuji di sana — yang diuji adalah bahwa dia
 selalu tampil pada perangkat tanpa penunjuk.
 
+Fase 15 menambah: test parser `peaks` (panjang, himpunan karakter, dan bahwa
+gelombang tidak menempel pada gambar atau video), test store yang dibuktikan
+gagal lebih dulu dengan menghapus `peaks` dari `copyAttachments`, test CHECK
+database untuk yang salah bentuk, dan delapan test `bun test` untuk
+`encodeWaveform` / `decodeWaveform` (urutan, rekaman lebih pendek dari 40
+petak, puncak yang bertahan, nilai di luar 0..1, yang salah bentuk). Itu test
+pertama di sisi frontend; Bun sudah jadi syarat menjalankannya, jadi yang
+bertambah cuma `@types/bun`. Di browser: 40 batang muncul hanya pada lampiran yang
+`peaks`-nya sah, penggeser tetap bisa difokus dan digeser dengan panah, dan
+tampilannya diperiksa terang, gelap, 1280 px, dan 360 px.
+
 ## Yang sengaja tidak dikerjakan
 
-- **Bentuk gelombang di pemutar.** Menuntut mendekode seluruh rekaman di
-  penerima, atau menyimpan ringkasannya di server — kolom kedua untuk hiasan.
+- ~~**Bentuk gelombang di pemutar.**~~ Dikerjakan di Fase 15, lewat jalan
+  ketiga yang tidak terlihat waktu itu: bukan mendekode di penerima dan bukan
+  menganalisis di server, melainkan menyimpan ringkasan yang SUDAH dihitung
+  perekam. Lihat [Bentuk gelombang](#bentuk-gelombang-attachmentspeaks).
 - **Tahan-untuk-merekam.** Tekan-sekali lebih mudah untuk semua umur dan
   bekerja sama di tetikus maupun layar sentuh.
 - **Mendengar ulang sebelum mengirim.** Buang-lalu-rekam-lagi sudah menutup

@@ -137,6 +137,12 @@ func isISOBMFF(head []byte) bool {
 // salah bukan alasan menggagalkan unggahan yang byte-nya sudah tersimpan.
 const maxDurationMS = 3_600_000
 
+// waveformBars adalah panjang persis string bentuk gelombang, sama dengan CHECK
+// di 0010_bentuk_gelombang.sql. Bukan batas atas: 40 batang atau tidak sama
+// sekali. Gelombang separuh panjang akan digambar client sebagai rekaman yang
+// berakhir di tengah.
+const waveformBars = 40
+
 // thumbWait adalah berapa lama unggahan mau menunggu giliran mendekode gambar.
 //
 // Habisnya waktu ini BUKAN kegagalan: lampirannya sudah tersimpan dan sudah
@@ -238,6 +244,7 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 	}
 	sa.Width, sa.Height = dimensions(r.URL.Query())
 	sa.DurationMS = duration(r.URL.Query(), contentType)
+	sa.Peaks = peaks(r.URL.Query(), contentType)
 
 	// Ukuran yang diakui client hanya dipakai kalau server tidak punya
 	// salinannya untuk diperiksa sendiri — yaitu saat turunan dimatikan. Di
@@ -710,6 +717,34 @@ func duration(q url.Values, contentType string) *int {
 		return nil
 	}
 	return &d
+}
+
+// peaks membaca bentuk gelombang rekaman dari query, dengan alasan yang sama
+// dengan duration: query sudah lengkap sebelum byte pertama berkasnya tiba.
+//
+// Tepat 40 karakter base64url, tiap karakter satu batang. Yang tidak berbentuk
+// itu dibuang, bukan ditolak — gelombang yang salah bukan alasan menggagalkan
+// unggahan yang byte-nya sudah tersimpan, persis seperti durasi. Yang dijaga di
+// sini bukan kebenaran angkanya (server tidak punya cara memeriksanya) melainkan
+// bentuknya: 40 byte dari himpunan karakter yang sempit, jadi string apa pun
+// yang menempel di kolom ini aman digambar dan aman dikirim ulang.
+func peaks(q url.Values, contentType string) *string {
+	if !strings.HasPrefix(contentType, "audio/") {
+		return nil
+	}
+	p := q.Get("p")
+	if len(p) != waveformBars {
+		return nil
+	}
+	for i := 0; i < len(p); i++ {
+		c := p[i]
+		ok := (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+			(c >= '0' && c <= '9') || c == '-' || c == '_'
+		if !ok {
+			return nil
+		}
+	}
+	return &p
 }
 
 // firstFilePart mengambil bagian multipart pertama yang membawa berkas.

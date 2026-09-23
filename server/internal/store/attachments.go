@@ -23,7 +23,7 @@ func attachmentCols(alias string) string {
 	if alias != "" {
 		alias += "."
 	}
-	cols := []string{"id", "name", "mime", "size", "width", "height", "duration_ms", "thumb_key"}
+	cols := []string{"id", "name", "mime", "size", "width", "height", "duration_ms", "peaks", "thumb_key"}
 	for i, c := range cols {
 		cols[i] = alias + c
 	}
@@ -38,7 +38,7 @@ func attachmentCols(alias string) string {
 // di sini.
 func scanAttachment(row pgx.Row, a *Attachment) error {
 	var thumbKey *string
-	if err := row.Scan(&a.ID, &a.Name, &a.MIME, &a.Size, &a.Width, &a.Height, &a.DurationMS, &thumbKey); err != nil {
+	if err := row.Scan(&a.ID, &a.Name, &a.MIME, &a.Size, &a.Width, &a.Height, &a.DurationMS, &a.Peaks, &thumbKey); err != nil {
 		return err
 	}
 	a.URL = AttachmentURL(a.ID)
@@ -75,10 +75,10 @@ func (s *Store) CreateAttachment(ctx context.Context, ownerID uuid.UUID, sa Stor
 
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO attachments
-			(id, owner_id, storage_key, name, mime, size, width, height, duration_ms,
+			(id, owner_id, storage_key, name, mime, size, width, height, duration_ms, peaks,
 			 thumb_key, thumb_mime, thumb_size)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-		sa.ID, ownerID, sa.Key, sa.Name, sa.MIME, sa.Size, sa.Width, sa.Height, sa.DurationMS,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		sa.ID, ownerID, sa.Key, sa.Name, sa.MIME, sa.Size, sa.Width, sa.Height, sa.DurationMS, sa.Peaks,
 		nullable(sa.ThumbKey), nullable(sa.ThumbMIME), thumbSize)
 	if isUniqueViolation(err) {
 		return ErrConflict
@@ -106,7 +106,7 @@ func (s *Store) AttachmentForRead(ctx context.Context, id, viewerID uuid.UUID) (
 	)
 	err := s.pool.QueryRow(ctx, `
 		SELECT a.storage_key, a.thumb_key, a.thumb_mime, a.thumb_size,
-		       a.id, a.name, a.mime, a.size, a.width, a.height, a.duration_ms
+		       a.id, a.name, a.mime, a.size, a.width, a.height, a.duration_ms, a.peaks
 		FROM attachments a
 		LEFT JOIN messages m ON m.id = a.message_id
 		WHERE a.id = $1
@@ -117,7 +117,7 @@ func (s *Store) AttachmentForRead(ctx context.Context, id, viewerID uuid.UUID) (
 		           WHERE cm.conversation_id = m.conversation_id AND cm.user_id = $2))
 		  )`, id, viewerID,
 	).Scan(&sa.Key, &thumbKey, &thumbMIME, &thumbSize,
-		&sa.ID, &sa.Name, &sa.MIME, &sa.Size, &sa.Width, &sa.Height, &sa.DurationMS)
+		&sa.ID, &sa.Name, &sa.MIME, &sa.Size, &sa.Width, &sa.Height, &sa.DurationMS, &sa.Peaks)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		// 404 juga untuk lampiran yang ADA tapi bukan haknya: membedakan

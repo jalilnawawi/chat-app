@@ -4,6 +4,7 @@ import Icon from './Icon';
 import type { Attachment } from '../types';
 
 import { formatDuration } from '../format';
+import { decodeWaveform } from '../gelombang';
 import { T } from '../teks';
 
 const SPEEDS = [1, 1.5, 2];
@@ -28,7 +29,8 @@ let sedangBerbunyi: HTMLAudioElement | null = null;
  *
  * Penggeser posisinya `<input type="range">` biasa: bisa digeser dengan jari,
  * dengan panah papan ketik, dan dibacakan pembaca layar tanpa satu baris ARIA
- * tambahan.
+ * tambahan. Bentuk gelombang (Fase 15) digambar DI BELAKANG penggeser yang
+ * sama itu, bukan menggantikannya — lihat `.gelombang` di index.css.
  */
 export default function VoicePlayer({ attachment, mine }: { attachment: Attachment; mine: boolean }) {
   const audio = useRef<HTMLAudioElement>(null);
@@ -93,6 +95,11 @@ export default function VoicePlayer({ attachment, mine }: { attachment: Attachme
     if (audio.current) audio.current.playbackRate = next;
   };
 
+  // Bentuk gelombang hanya ada pada rekaman dari dalam aplikasi, dan hanya
+  // bila bentuknya benar. Tanpanya pemutar ini persis seperti sebelum Fase 15.
+  const bars = decodeWaveform(attachment.peaks);
+  const played = duration > 0 ? Math.min(1, position / duration) : 0;
+
   const ink = mine ? 'text-accent-ink' : 'text-accent-text';
   // Putih penuh di gelembung sendiri — lihat catatan kontras di MessageParts.
   const soft = mine ? 'text-accent-ink' : 'text-muted';
@@ -150,20 +157,54 @@ export default function VoicePlayer({ attachment, mine }: { attachment: Attachme
         {!voice && (
           <p className={`truncate text-[13px] font-semibold ${ink}`}>{attachment.name}</p>
         )}
-        <input
-          type="range"
-          min={0}
-          max={Math.max(1, Math.round(duration))}
-          step={100}
-          value={Math.min(position, duration)}
-          onChange={e => seek(Number(e.target.value))}
-          disabled={failed || duration === 0}
-          aria-label="Posisi pemutaran"
-          aria-valuetext={`${formatDuration(position)} dari ${formatDuration(duration)}`}
-          // Setinggi 32 px (40 px di layar sentuh) walau jalurnya tipis: yang
-          // ditekan jari adalah kotaknya, bukan garisnya.
-          className={`block h-8 w-full cursor-pointer [@media(pointer:coarse)]:h-10 ${mine ? 'accent-accent-ink' : 'accent-accent'}`}
-        />
+        <div className="relative">
+          {bars && (
+            // Murni gambar: yang bisa difokus dan digeser adalah penggeser di
+            // bawahnya, yang menutupi kotak yang sama persis.
+            <span
+              aria-hidden
+              className="pointer-events-none absolute inset-0 flex items-center gap-px"
+            >
+              {bars.map((level, i) => (
+                <span
+                  key={i}
+                  className={`min-w-px flex-1 rounded-full ${
+                    i / bars.length < played
+                      ? mine
+                        ? 'bg-accent-ink'
+                        : 'bg-accent'
+                      : mine
+                        ? 'bg-accent-ink/45'
+                        : 'bg-line-strong/55'
+                  }`}
+                  // Sekurang-kurangnya 2 px: diam di tengah rekaman adalah
+                  // garis tipis yang tetap terlihat, bukan lubang.
+                  style={{ height: `${Math.max(2, Math.round(level * 24))}px` }}
+                />
+              ))}
+            </span>
+          )}
+          <input
+            type="range"
+            min={0}
+            max={Math.max(1, Math.round(duration))}
+            step={100}
+            value={Math.min(position, duration)}
+            onChange={e => seek(Number(e.target.value))}
+            disabled={failed || duration === 0}
+            aria-label="Posisi pemutaran"
+            aria-valuetext={`${formatDuration(position)} dari ${formatDuration(duration)}`}
+            // Setinggi 32 px (40 px di layar sentuh) walau jalurnya tipis: yang
+            // ditekan jari adalah kotaknya, bukan garisnya.
+            className={`relative block h-8 w-full cursor-pointer [@media(pointer:coarse)]:h-10 ${
+              bars
+                ? `gelombang ${mine ? 'text-accent-ink' : 'text-accent'}`
+                : mine
+                  ? 'accent-accent-ink'
+                  : 'accent-accent'
+            }`}
+          />
+        </div>
         <div className={`flex items-center justify-between text-[11.5px] tabular-nums ${soft}`}>
           <span className="flex items-center gap-1">
             {voice && <Icon name="mikrofon" size={12} />}

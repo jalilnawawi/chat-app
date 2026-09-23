@@ -94,6 +94,13 @@ export type Attachment = {
    */
   durationMs?: number;
   /**
+   * Bentuk gelombang rekaman: 40 karakter base64url, dibaca lewat
+   * `decodeWaveform`. Ada pada lampiran yang sama dengan `durationMs`, dan
+   * dengan alasan yang sama — berkasnya tidak menyebutnya, perekamnya tahu.
+   * Kosong berarti pemutarnya memakai penggeser polos.
+   */
+  peaks?: string;
+  /**
    * Alamat turunan kecil, kosong bila tidak ada.
    *
    * Tiga hal berakhir tanpa turunan: bukan gambar, sudah cukup kecil untuk
@@ -326,6 +333,8 @@ export type Upload = {
   mime: string;
   /** Ada hanya pada rekaman suara dari dalam aplikasi. */
   durationMs?: number;
+  /** Bentuk gelombang rekaman; ikut `durationMs`, lihat gelombang.ts. */
+  peaks?: string;
   /** objectURL untuk pratinjau gambar; wajib dilepas saat unggahan dibuang. */
   previewUrl: string | null;
   /** 0..1 */

@@ -285,6 +285,12 @@ type Attachment struct {
 	// 0009_pesan_suara.sql. Angka dari perekamnya, dipakai untuk tampilan saja.
 	DurationMS *int `json:"durationMs,omitempty"`
 
+	// Peaks adalah bentuk gelombang rekaman: 48 karakter base64url, tiap
+	// karakter satu batang bernilai 0..63. Sumbernya sama dengan DurationMS —
+	// perekam di client — dan ada pada lampiran yang sama. Lihat
+	// 0010_bentuk_gelombang.sql.
+	Peaks *string `json:"peaks,omitempty"`
+
 	// ThumbURL kosong berarti lampiran ini tidak punya turunan kecil, dan
 	// client memakai URL aslinya. Tiga hal berakhir di keadaan itu: bukan
 	// gambar, sudah cukup kecil untuk dipakai apa adanya, dan pembuatan

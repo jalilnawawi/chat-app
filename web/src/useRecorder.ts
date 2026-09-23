@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { encodeWaveform } from './gelombang';
+
 /**
  * Batas panjang satu pesan suara.
  *
@@ -15,6 +17,17 @@ const MIN_RECORDING_MS = 700;
 /** Berapa batang yang digambar di bilah perekam, dan seberapa sering. */
 const LEVEL_BARS = 32;
 const TICK_MS = 100;
+
+/**
+ * Batas berapa contoh tingkat suara yang disimpan untuk bentuk gelombang.
+ *
+ * Lima menit pada 100 ms adalah 3000 contoh, dan batas rekaman menjamin
+ * angkanya tidak pernah lebih. Batas ini ada untuk hal lain: jam yang
+ * melompat, tab yang dibekukan lalu dijalankan lagi, atau timer yang menembak
+ * lebih rapat dari yang diminta — apa pun sebabnya, array ini tidak boleh
+ * tumbuh tanpa ujung di dalam sesuatu yang berumur lima menit.
+ */
+const MAX_LEVEL_SAMPLES = 4000;
 
 /**
  * Format rekaman, urut dari yang paling disukai.
@@ -48,7 +61,12 @@ export const canRecord = () =>
   Boolean(navigator.mediaDevices?.getUserMedia) &&
   pickFormat() !== null;
 
-export type Recording = { file: File; durationMs: number };
+export type Recording = {
+  file: File;
+  durationMs: number;
+  /** null bila AnalyserNode tidak bisa dibuka — lihat di bawah. */
+  peaks: string | null;
+};
 
 type Phase = 'idle' | 'starting' | 'recording';
 
@@ -59,6 +77,14 @@ type Session = {
   timer: number;
   startedAt: number;
   chunks: Blob[];
+  /**
+   * Seluruh tingkat suara rekaman ini, bukan hanya yang terlihat di bilah.
+   *
+   * Di ref, bukan di state: 3000 angka yang memicu render tiap 100 ms adalah
+   * biaya yang tidak dibayar oleh apa pun yang terlihat. Yang digambar selama
+   * merekam tetap `levels`, 32 terakhir.
+   */
+  samples: number[];
 };
 
 function describe(err: unknown): string {
@@ -138,7 +164,7 @@ export function useRecorder(onDone: (rec: Recording) => void) {
         const ext = FORMATS.find(f => f.base === base)?.ext ?? format.ext;
         const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
         const file = new File(s.chunks, `pesan-suara-${stamp}.${ext}`, { type: base });
-        doneRef.current({ file, durationMs });
+        doneRef.current({ file, durationMs, peaks: encodeWaveform(s.samples) });
       };
       if (s.recorder.state !== 'inactive') {
         s.recorder.onstop = finish;
@@ -218,6 +244,7 @@ export function useRecorder(onDone: (rec: Recording) => void) {
       timer: 0,
       startedAt: performance.now(),
       chunks: [],
+      samples: [],
     };
     recorder.ondataavailable = e => {
       if (e.data.size > 0) s.chunks.push(e.data);
@@ -234,6 +261,7 @@ export function useRecorder(onDone: (rec: Recording) => void) {
         // jarang melewati 0,2, dan batang setinggi seperlima tidak terbaca
         // sebagai "sedang merekam".
         const level = Math.min(1, Math.sqrt(sum / samples.length) * 4);
+        if (s.samples.length < MAX_LEVEL_SAMPLES) s.samples.push(level);
         setLevels(prev => [...prev, level].slice(-LEVEL_BARS));
       }
       if (now >= MAX_RECORDING_MS) stopRef.current(true);

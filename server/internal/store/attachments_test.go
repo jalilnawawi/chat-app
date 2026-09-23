@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -161,11 +162,12 @@ func newAttachment(t *testing.T, s *store.Store, ctx context.Context, owner stor
 	return id
 }
 
-// Durasi pesan suara (Fase 13) ikut ke setiap tempat lampiran muncul: barisnya
-// sendiri, salinan jsonb di pesan, riwayat, dan salinan terusan. Kolom yang
-// lupa disebut di salah satu daftar kolom tidak dilaporkan compiler — dia
-// muncul sebagai pesan suara "0:00" di layar penerima terusan.
-func TestDurasiPesanSuaraIkutTersimpanDanTerusan(t *testing.T) {
+// Durasi (Fase 13) dan bentuk gelombang (Fase 15) ikut ke setiap tempat
+// lampiran muncul: barisnya sendiri, salinan jsonb di pesan, riwayat, dan
+// salinan terusan. Kolom yang lupa disebut di salah satu daftar kolom tidak
+// dilaporkan compiler — dia muncul sebagai pesan suara "0:00" tanpa gelombang
+// di layar penerima terusan.
+func TestDurasiDanGelombangPesanSuaraIkutTersimpanDanTerusan(t *testing.T) {
 	s, ctx := newStore(t)
 
 	a := newUser(t, s, ctx, "suara_a")
@@ -175,10 +177,14 @@ func TestDurasiPesanSuaraIkutTersimpanDanTerusan(t *testing.T) {
 	other := newDirect(t, s, ctx, a, c)
 
 	dur := 7250
+	gelombang := strings.Repeat("Qz09_-", 6) + "Qz09"
 	id := uuid.New()
 	if err := s.CreateAttachment(ctx, a.ID, store.StoredAttachment{
-		Attachment: store.Attachment{ID: id, Name: "pesan-suara.weba", MIME: "audio/webm", Size: 999, DurationMS: &dur},
-		Key:        "/uji/" + id.String(),
+		Attachment: store.Attachment{
+			ID: id, Name: "pesan-suara.weba", MIME: "audio/webm", Size: 999,
+			DurationMS: &dur, Peaks: &gelombang,
+		},
+		Key: "/uji/" + id.String(),
 	}); err != nil {
 		t.Fatalf("catat rekaman: %v", err)
 	}
@@ -187,6 +193,9 @@ func TestDurasiPesanSuaraIkutTersimpanDanTerusan(t *testing.T) {
 		t.Helper()
 		if len(atts) != 1 || atts[0].DurationMS == nil || *atts[0].DurationMS != dur {
 			t.Fatalf("%s: durasi hilang: %+v", where, atts)
+		}
+		if atts[0].Peaks == nil || *atts[0].Peaks != gelombang {
+			t.Fatalf("%s: gelombang hilang: %+v", where, atts)
 		}
 	}
 
@@ -218,10 +227,30 @@ func TestDurasiPesanSuaraIkutTersimpanDanTerusan(t *testing.T) {
 	}
 	cek("terusan", fwd.Attachments)
 
-	// Lampiran lain tetap tanpa durasi.
+	// Lampiran lain tetap tanpa durasi dan tanpa gelombang.
 	img := newAttachment(t, s, ctx, a, "foto.png", "image/png")
 	got, err := s.AttachmentForRead(ctx, img, a.ID)
-	if err != nil || got.DurationMS != nil {
-		t.Fatalf("gambar membawa durasi: %v %+v", err, got.DurationMS)
+	if err != nil || got.DurationMS != nil || got.Peaks != nil {
+		t.Fatalf("gambar membawa durasi/gelombang: %v %+v %+v", err, got.DurationMS, got.Peaks)
+	}
+}
+
+// CHECK di 0010_bentuk_gelombang.sql adalah satu-satunya yang menjaga kolom ini
+// setelah handler unggahan. Jalur lain yang suatu hari menulis lampiran —
+// impor, migrasi data — tidak lewat parser query itu.
+func TestGelombangYangSalahBentukDitolakDatabase(t *testing.T) {
+	s, ctx := newStore(t)
+	a := newUser(t, s, ctx, "gelombang_a")
+
+	for _, bad := range []string{"", strings.Repeat("A", 39), strings.Repeat("A", 41), strings.Repeat("A", 39) + "+"} {
+		bad := bad
+		id := uuid.New()
+		err := s.CreateAttachment(ctx, a.ID, store.StoredAttachment{
+			Attachment: store.Attachment{ID: id, Name: "x.weba", MIME: "audio/webm", Size: 1, Peaks: &bad},
+			Key:        "/uji/" + id.String(),
+		})
+		if err == nil {
+			t.Errorf("gelombang %q (%d karakter) diterima", bad, len(bad))
+		}
 	}
 }
