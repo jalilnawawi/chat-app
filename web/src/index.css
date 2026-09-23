@@ -1,66 +1,84 @@
 @import 'tailwindcss';
 /* Hanya varian tegak. Miringnya tidak dipakai di mana pun, dan berkas yang
    tidak pernah dipakai tetap ikut terunduh kalau diimpor. */
-@import '@fontsource-variable/plus-jakarta-sans/wght.css';
+@import '@fontsource-variable/source-sans-3/wght.css';
+/* Sumbu opsz: Source Serif menyesuaikan tebal-tipisnya sendiri pada ukuran
+   pakai, dan isi gelembung dibaca di 16px — bukan di ukuran judul. */
+@import '@fontsource-variable/source-serif-4/opsz.css';
 
 /**
- * Palet: pagi di tepi air.
+ * Palet: lapang dan tenang.
  *
- * Teal lagoon untuk suara sendiri, mangga untuk panggilan, kertas putih yang
- * disemburati mint supaya layar tidak terasa seperti dokumen kantor. Warnanya
- * dipilih setelah rasio kontrasnya dihitung, bukan sebaliknya — aplikasi ini
- * dipakai lintas umur, dan teks yang harus dikira-kira adalah teks yang gagal.
+ * Kertas abu-lilac yang dingin, tinta plum, dan ungu dalam untuk suara sendiri.
+ * Saffron untuk panggilan. Warnanya dipilih setelah rasio kontrasnya dihitung,
+ * bukan sebaliknya — aplikasi ini dipakai lintas umur, dan teks yang harus
+ * dikira-kira adalah teks yang gagal.
  *
- * Setiap nada punya SATU pekerjaan. Mangga tidak pernah muncul sebagai hiasan;
+ * Setiap nada punya SATU pekerjaan. Saffron tidak pernah muncul sebagai hiasan;
  * kalau dia ada di layar, artinya ada yang memanggil namamu. Isyarat yang
  * dipakai untuk dua hal berhenti jadi isyarat.
+ *
+ * Keberanian dihabiskan di SATU tempat: kepala percakapan. Dia satu-satunya
+ * bidang gelap di layar terang, karena dia yang menjawab "aku sedang di mana".
+ * Sisanya menepi.
  */
 @theme {
   --font-sans:
-    'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    'Source Sans 3 Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Isi gelembung saja. Layar ini dibaca berjam-jam, bukan dipindai, dan serif
+     yang dipasang pada ukuran baca membuat giliran bicara terbaca sebagai
+     kalimat orang alih-alih sebagai baris antarmuka. */
+  --font-serif: 'Source Serif 4 Variable', Georgia, 'Times New Roman', serif;
 
   /* Lengkung gelembung. Satu angka, dipakai bersama oleh empat sudut yang
      berbeda-beda nasibnya — lihat MessageBubble. */
   --radius-bubble: 1.125rem;
   /* Ekor gelembung: sudut rapat di sisi pengirim, dan sambungan antarpesan
      dalam satu rentetan. */
-  --radius-tail: 7px;
+  --radius-tail: 6px;
 
-  --color-canvas: oklch(0.966 0.018 192);
+  --color-canvas: oklch(0.949 0.006 300);
   --color-surface: oklch(1 0 0);
-  --color-line: oklch(0.905 0.014 200);
+  --color-line: oklch(0.902 0.009 298);
   /* Garis yang MEMBATASI sesuatu yang bisa ditekan atau diketik, bukan yang
      sekadar memisahkan. Cukup gelap untuk terlihat tanpa harus dicari. */
-  --color-line-strong: oklch(0.62 0.025 205);
+  --color-line-strong: oklch(0.622 0.022 300);
   /* Tepi gelembung orang lain. Di terang sama dengan garis pisah; di gelap
      dinaikkan sendiri, karena garis pisah gelap nyaris tidak terbedakan dari
      kanvas dan gelembungnya mengambang tanpa bentuk. */
-  --color-line-bubble: oklch(0.905 0.014 200);
-  --color-ink: oklch(0.28 0.03 225);
-  --color-muted: oklch(0.525 0.025 222);
+  --color-line-bubble: oklch(0.902 0.009 298);
+  --color-ink: oklch(0.243 0.023 305);
+  --color-muted: oklch(0.462 0.032 300);
 
-  --color-accent: oklch(0.545 0.11 196);
+  --color-accent: oklch(0.382 0.081 302);
   --color-accent-ink: oklch(1 0 0);
-  --color-accent-soft: oklch(0.945 0.03 196);
-  /* Bidang di DALAM gelembung teal (kutipan, kartu berkas, kolom sunting).
-     Lebih gelap, bukan putih transparan: putih di atas teal hanya 4,6:1, dan
-     lapisan putih tipis menurunkannya lagi di bawah AA. Di atas bidang ini
-     putih penuh mencapai ±6,8:1. */
-  --color-accent-deep: oklch(0.44 0.09 196);
-  /* Teal untuk TEKS berdiri sendiri: yang dipakai mengisi bidang terlalu terang
-     untuk dibaca sebagai huruf kecil di atas kertas. */
-  --color-accent-text: oklch(0.505 0.105 196);
+  --color-accent-soft: oklch(0.928 0.023 300);
+  /* Bidang di DALAM gelembung sendiri (kutipan, kartu berkas, kolom sunting).
+     Lebih gelap, bukan putih transparan: putih transparan di atas ungu jatuh
+     di bawah AA, sementara di atas bidang ini putih PENUH mencapai ±11:1. */
+  --color-accent-deep: oklch(0.318 0.075 303);
+  /* Ungu untuk TEKS berdiri sendiri — nama penulis di grup, tanda terbaca,
+     tautan. Sedikit lebih terang dari bidangnya supaya hurufnya tidak
+     menghilang, tetap ±7:1 di atas kertas. */
+  --color-accent-text: oklch(0.444 0.086 301);
 
-  --color-call: oklch(0.78 0.15 72);
-  --color-call-soft: oklch(0.945 0.045 80);
-  --color-call-ink: oklch(0.38 0.1 62);
+  --color-call: oklch(0.545 0.114 68);
+  --color-call-soft: oklch(0.955 0.045 82);
+  --color-call-ink: oklch(0.352 0.078 66);
 
-  --color-danger: oklch(0.52 0.19 25);
-  --color-danger-soft: oklch(0.955 0.025 25);
-  --color-ok: oklch(0.5 0.13 155);
-  --color-ok-soft: oklch(0.95 0.04 155);
+  --color-danger: oklch(0.468 0.161 27);
+  --color-danger-soft: oklch(0.953 0.018 27);
+  --color-ok: oklch(0.531 0.101 158);
+  --color-ok-soft: oklch(0.952 0.021 158);
 
-  --shadow-pop: 0 12px 32px -12px oklch(0.28 0.03 225 / 0.28);
+  /* Kepala percakapan. Bukan turunan dari aksen: dia bidang, bukan aksi, dan
+     nada yang dipakai untuk dua hal berhenti jadi isyarat. */
+  --color-kepala: oklch(0.253 0.047 305);
+  --color-kepala-teks: oklch(0.936 0.013 300);
+  --color-kepala-redup: oklch(0.746 0.029 300);
+  --color-kepala-tekan: oklch(0.309 0.054 303);
+
+  --shadow-pop: 0 14px 36px -14px oklch(0.243 0.023 305 / 0.34);
 }
 
 /**
@@ -93,35 +111,43 @@
  * sini adalah tema.ts, sebelum React sempat menggambar apa pun.
  */
 :root[data-tema='gelap'] {
-  --color-canvas: oklch(0.185 0.018 228);
-  --color-surface: oklch(0.232 0.02 228);
-  --color-line: oklch(0.315 0.022 228);
-  --color-line-strong: oklch(0.52 0.026 228);
-  --color-line-bubble: oklch(0.4 0.026 228);
-  --color-ink: oklch(0.95 0.008 210);
-  --color-muted: oklch(0.72 0.02 220);
+  --color-canvas: oklch(0.186 0.022 305);
+  --color-surface: oklch(0.243 0.026 305);
+  --color-line: oklch(0.323 0.03 303);
+  --color-line-strong: oklch(0.536 0.038 303);
+  --color-line-bubble: oklch(0.392 0.036 303);
+  --color-ink: oklch(0.936 0.013 300);
+  --color-muted: oklch(0.742 0.029 300);
 
-  --color-accent: oklch(0.545 0.105 196);
+  --color-accent: oklch(0.438 0.088 301);
   --color-accent-ink: oklch(1 0 0);
-  --color-accent-soft: oklch(0.3 0.045 200);
-  --color-accent-deep: oklch(0.44 0.085 196);
-  --color-accent-text: oklch(0.8 0.09 196);
+  --color-accent-soft: oklch(0.297 0.043 303);
+  --color-accent-deep: oklch(0.376 0.079 302);
+  --color-accent-text: oklch(0.782 0.077 300);
 
-  --color-call: oklch(0.8 0.145 72);
-  --color-call-soft: oklch(0.33 0.055 70);
-  /* Tinta mangga tetap GELAP di tema gelap, dan itu bukan kelalaian: dia hanya
+  --color-call: oklch(0.742 0.125 70);
+  --color-call-soft: oklch(0.322 0.052 70);
+  /* Tinta saffron tetap GELAP di tema gelap, dan itu bukan kelalaian: dia hanya
      pernah dipakai di atas `bg-call` yang terang — sebutan (@) dan titik status
      "tidak di tempat". Di atas `bg-call-soft` yang ikut gelap, pasangan ini
-     turun ke 1,2:1; itu bukan pasangan yang sah, dan tidak ada lagi yang
-     memakainya. */
-  --color-call-ink: oklch(0.38 0.1 62);
+     jatuh jauh di bawah AA; tidak ada lagi yang memakainya di sana. */
+  --color-call-ink: oklch(0.352 0.078 66);
 
-  --color-danger: oklch(0.7 0.16 25);
-  --color-danger-soft: oklch(0.3 0.07 25);
-  --color-ok: oklch(0.78 0.13 160);
-  --color-ok-soft: oklch(0.3 0.06 160);
+  --color-danger: oklch(0.704 0.148 25);
+  --color-danger-soft: oklch(0.302 0.066 25);
+  --color-ok: oklch(0.762 0.118 158);
+  --color-ok-soft: oklch(0.303 0.056 158);
 
-  --shadow-pop: 0 12px 32px -12px oklch(0 0 0 / 0.55);
+  /* Di tema gelap kepala tetap bidang tersendiri, tapi lewat arah yang
+     berlawanan: dia LEBIH gelap dari kanvas. Yang dijaga bukan "gelap", tapi
+     "terpisah" — kepala yang meleleh ke kanvas berhenti menjawab pertanyaan
+     yang jadi alasan keberadaannya. */
+  --color-kepala: oklch(0.146 0.024 305);
+  --color-kepala-teks: oklch(0.936 0.013 300);
+  --color-kepala-redup: oklch(0.716 0.03 300);
+  --color-kepala-tekan: oklch(0.236 0.035 303);
+
+  --shadow-pop: 0 14px 36px -14px oklch(0 0 0 / 0.6);
 
   --avatar-l: 0.42;
   --avatar-c: 0.07;
@@ -174,6 +200,24 @@ body {
   outline-offset: 2px;
 }
 
+/* Isi gelembung: serif pada ukuran baca.
+
+   Satu aturan di sini, bukan utilitas di MessageBubble, karena yang berubah
+   bukan satu tempat melainkan peran — "teks yang dibaca orang" berbeda dari
+   "teks antarmuka", dan pembedanya adalah gelembungnya sendiri. Aturan ini
+   tidak berlapis, jadi dia menang atas utilitas ukuran di komponennya. */
+.sasaran-fokus {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+/* Kepala percakapan menggambar cincin fokusnya dengan warna teksnya sendiri:
+   ungu di atas plum gelap tidak terlihat. */
+header :focus-visible:not(.cincin-sendiri) {
+  outline-color: var(--color-kepala-teks);
+}
+
 /* Baris riwayat yang difokus (roving focus) menggambar cincinnya pada
    gelembung, bukan selebar baris: cincin selebar layar terbaca seperti
    pilihan baris tabel, bukan seperti pesan yang sedang dipilih. */
@@ -191,7 +235,7 @@ body {
   opacity: 1;
 }
 
-/* Di dalam gelembung sendiri latarnya teal: cincin teal dan celahnya lenyap
+/* Di dalam gelembung sendiri latarnya ungu: cincin ungu dan celahnya lenyap
    di sana. Cincinnya ikut warna huruf gelembung itu. */
 .gelembung-sendiri :focus-visible:not(.cincin-sendiri) {
   outline-color: var(--color-accent-ink);

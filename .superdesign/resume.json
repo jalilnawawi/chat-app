@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "chat-panel": {
+      "targetKind": "existing-ui",
+      "projectId": "8c742611-4eb4-4c3b-9abf-98a2a774a8f3",
+      "baselineDraftId": "bbee27c4-e6a3-41d5-8eed-0841ba8ae8bb",
+      "activeDraftId": "25ebba62-2c6e-4300-bc71-29a8df91b7a9",
+      "designSystemPath": ".superdesign/design-system.md",
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "web/src/index.css",
+        "web/src/components/ChatPanel.tsx:501",
+        "web/src/components/ChatHeader.tsx",
+        "web/src/components/MessageBubble.tsx",
+        "web/src/components/MessageMenu.tsx:239",
+        "web/src/components/ReactionRow.tsx",
+        "web/src/components/Composer.tsx:404",
+        "web/src/components/PinBar.tsx",
+        "web/src/components/ConversationStates.tsx",
+        "web/src/components/Avatar.tsx",
+        "web/src/components/Icon.tsx",
+        "web/src/components/ui/IconButton.tsx",
+        "web/src/components/ui/PillButton.tsx"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "951bffba60c35d2bb0253a73c0ba8a55eb9c1c013abd51fb1f01315c79e63728",
+        "web/src/index.css": "1669f09706d7748c22d18c38b22ab523a5d0329a27b7b6f791343ed685438a30",
+        "web/src/components/ChatPanel.tsx": "9318b6dac1e14ab7a8ffc61deabdfce1ca84c3951db0a946eb68b381a7d55cfb",
+        "web/src/components/ChatHeader.tsx": "e0d8bd7b9653befd25221c384c522f52e348acd79bef60fa2da990dcefe20bff",
+        "web/src/components/MessageBubble.tsx": "b98c42137fc9f9d68803b38b7ee90605a7e5a24334bc487799625898e2403784",
+        "web/src/components/MessageMenu.tsx": "54c047452a15a54c0dc47379f002bfa51c0fd29e1a5fb5145c3b3e669b4becf6",
+        "web/src/components/ReactionRow.tsx": "f65041de343f72cdaa9343d75e56ce5ed6ed7519513a71284db5582a20dc8038",
+        "web/src/components/Composer.tsx": "6d9f852a2967339286bdd15b506f1390050c60b847e163125ae9595f404a0844",
+        "web/src/components/PinBar.tsx": "36c4d9502f8c9a1581643a50859b618c0ad2250662e0f689f9896ccd5f22ae3c",
+        "web/src/components/ConversationStates.tsx": "1ce9530a1797c33e98b440ba9d0758a8c2fd9fbd88bca08340d35217fb103fb5",
+        "web/src/components/Avatar.tsx": "8f2673c7ece1931a62d90e17cf3cfebf29e27bbef4deb9db308d32fa2bf6e85b",
+        "web/src/components/Icon.tsx": "0b2d4fcf1e5f85fdca76b378fe29b54ddb867a397e6bcacfcf3a14ae3bcd2832",
+        "web/src/components/ui/IconButton.tsx": "cd2f0868702fccc9e480bbf1c4d777939b46c5072527c900fd464ddab05202af",
+        "web/src/components/ui/PillButton.tsx": "ae6d421c74a2419f7759e3a5ea5f8cfe2e6c3eb86da4c7601ff48f20f06d1de4"
+      },
+      "drafts": {
+        "bbee27c4-e6a3-41d5-8eed-0841ba8ae8bb": {
+          "title": "Ruang Percakapan \u2014 Sekarang",
+          "visualDirection": "faithful reproduction of the shipped teal/mint 'Pagi di Tepi Air' chat column",
+          "currentVersion": 1
+        },
+        "25ebba62-2c6e-4300-bc71-29a8df91b7a9": {
+          "title": "Ruang Percakapan \u2014 Lapang & Tenang",
+          "visualDirection": "calm editorial: cool lilac-grey paper, deep violet own-bubbles, saffron mention tone, Source Serif 4 message body over Source Sans 3 chrome, generous spacing; v2 adds a solid deep-plum chat header bar (#2E2545) as the one dark plane on the screen",
+          "parentDraftId": "bbee27c4-e6a3-41d5-8eed-0841ba8ae8bb",
+          "authoredBy": "claude-opus-5 via import-design-draft (no generation credits)",
+          "currentVersion": 2
+        },
+        "ccad1f04-03c6-4198-a720-9d52cad2ef05": {
+          "title": "Ruang Percakapan \u2014 Padat & Fokus",
+          "visualDirection": "dense workstation: cool grey canvas, solid navy toolbar chrome, ink-blue own-bubbles, magenta-rose mention tone, IBM Plex Sans, tight run rhythm with a fixed right-hand meta column",
+          "parentDraftId": "bbee27c4-e6a3-41d5-8eed-0841ba8ae8bb",
+          "authoredBy": "claude-opus-5 via import-design-draft (no generation credits)",
+          "currentVersion": 1
+        }
+      },
+      "notes": "User selected 'Lapang & Tenang' and asked for a chat header that contrasts with the base colour; v2 gives it a solid #2E2545 bar. Still pending: translate the direction into ChatPanel.tsx + index.css, and derive the dark theme. Team is out of Superdesign generation credits, so drafts are authored locally and pushed with import-design-draft.",
+      "updatedAt": "2026-09-23T06:26:16.693251Z"
+    }
+  }
+}

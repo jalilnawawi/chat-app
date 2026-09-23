@@ -1,0 +1,38 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-font",
+        "value": "source sans 3",
+        "createdAt": "2026-09-23T06:15:38.551Z",
+        "reason": "user confirmed: chose 'Arah visual baru' for the ChatPanel redesign, so the draft deliberately leaves DESIGN.md's Plus Jakarta Sans"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "source serif 4",
+        "createdAt": "2026-09-23T06:15:38.561Z",
+        "reason": "user confirmed: chose 'Arah visual baru' for the ChatPanel redesign, serif message body is the proposed direction"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          ".superdesign/tmp/lapang.html"
+        ],
+        "createdAt": "2026-09-23T06:18:23.187Z",
+        "reason": "false positive: detector reads inline style only and cannot resolve Tailwind CDN utility padding (px-3 py-2 etc.), so it reports 'no inset' on elements that do have padding"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          ".superdesign/tmp/padat.html"
+        ],
+        "createdAt": "2026-09-23T06:18:23.199Z",
+        "reason": "false positive: detector reads inline style only and cannot resolve Tailwind CDN utility padding (px-3 py-2 etc.), so it reports 'no inset' on elements that do have padding"
+      }
+    ]
+  }
+}

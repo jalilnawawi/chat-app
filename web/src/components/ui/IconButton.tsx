@@ -27,9 +27,10 @@ export default function IconButton({
   label: string;
   iconSize?: number;
   size?: 'md' | 'sm';
-  /** Tombol berkeadaan (panel terbuka): diberi `aria-pressed` dan nada teal. */
+  /** Tombol berkeadaan (panel terbuka): diberi `aria-pressed` dan nada aksen. */
   pressed?: boolean;
-  tone?: 'muted' | 'danger';
+  /** `kepala`: untuk bidang gelap kepala percakapan, tempat nada redup biasa hilang. */
+  tone?: 'muted' | 'danger' | 'kepala';
 }) {
   const base =
     size === 'md'
@@ -40,7 +41,9 @@ export default function IconButton({
       ? 'bg-accent-soft text-accent-text'
       : tone === 'danger'
         ? 'text-danger hover:bg-surface'
-        : 'text-muted hover:bg-canvas hover:text-ink';
+        : tone === 'kepala'
+          ? 'text-kepala-redup hover:bg-kepala-tekan hover:text-kepala-teks'
+          : 'text-muted hover:bg-canvas hover:text-ink';
   return (
     <button
       ref={ref}

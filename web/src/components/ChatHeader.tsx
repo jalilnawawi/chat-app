@@ -29,13 +29,16 @@ export default function ChatHeader({
   const title = conversationTitle(conversation);
 
   return (
-    <header className="flex items-center gap-2 border-b border-line bg-surface px-2 py-2.5 md:px-4 md:py-3">
+    // Tanpa garis bawah: bidangnya sendiri yang memisahkan, dan garis di tepi
+    // dua bidang yang sudah berbeda adalah garis yang tidak mengabarkan apa pun.
+    <header className="flex items-center gap-2 bg-kepala px-2 py-2.5 text-kepala-teks md:px-4 md:py-3">
       {/* Hanya ada di layar sempit, tempat daftar percakapan benar-benar pergi
           saat sebuah percakapan dibuka. Di layar lebar keduanya bersebelahan,
           dan tombol kembali tidak mengembalikan apa pun. */}
       <IconButton
         icon="kembali"
         label="Kembali ke daftar percakapan"
+        tone="kepala"
         className="md:hidden"
         onClick={closeConversation}
       />
@@ -48,8 +51,8 @@ export default function ChatHeader({
         dot={conversation.type === 'direct' ? dotFor(peerOnline, peerStatus?.status) : undefined}
       />
       <div className="min-w-0 flex-1">
-        <h2 className="truncate text-[15px] font-bold">{title}</h2>
-        <p className="truncate text-[13px] text-muted">
+        <h2 className="truncate text-[17px] font-semibold tracking-[-.01em]">{title}</h2>
+        <p className="truncate text-[13px] text-kepala-redup">
           {conversation.type === 'group'
             ? `${memberCount} anggota`
             : // Status yang dipasang orangnya menggantikan Online/Offline.
@@ -62,13 +65,19 @@ export default function ChatHeader({
         </p>
       </div>
 
-      <IconButton icon="cari" label="Cari di percakapan ini" onClick={onSearch} />
+      <IconButton icon="cari" label="Cari di percakapan ini" tone="kepala" onClick={onSearch} />
 
       {/* Hanya grup yang punya pengelolaan. DM tidak bisa ditambahi orang —
           lihat catatan kebocoran di server/internal/store/group.go — jadi
           tombolnya memang tidak ada di sana, bukan ada tapi menolak. */}
       {conversation.type === 'group' && (
-        <IconButton icon="anggota" label="Kelola grup" pressed={panelOpen} onClick={onTogglePanel} />
+        <IconButton
+          icon="anggota"
+          label="Kelola grup"
+          tone="kepala"
+          pressed={panelOpen}
+          onClick={onTogglePanel}
+        />
       )}
     </header>
   );

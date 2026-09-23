@@ -541,7 +541,7 @@ export default function ChatPanel({
         {showOffline && (
           <p
             role="status"
-            // Bukan mangga: mangga berarti ada yang memanggilmu, dan kabar
+            // Bukan saffron: saffron berarti ada yang memanggilmu, dan kabar
             // jaringan bukan panggilan.
             className="flex items-center gap-2.5 border-b border-line bg-surface px-4 py-2.5 text-[14px] text-ink"
           >
@@ -577,7 +577,7 @@ export default function ChatPanel({
           aria-busy={historyLoading}
           aria-describedby="petunjuk-riwayat"
           onKeyDown={roving.onKeyDown}
-          className="flex-1 overflow-y-auto px-3 py-3 md:px-6 md:py-4"
+          className="flex-1 overflow-y-auto px-3 py-3 md:px-6 md:py-5"
         >
           <p id="petunjuk-riwayat" className="sr-only">
             Panah atas dan bawah untuk berpindah pesan, Enter untuk membuka tindakan pesan.
@@ -587,7 +587,7 @@ export default function ChatPanel({
           {/* Kolom baca dibatasi: di layar lebar, pesan sendiri dan pesan
               orang lain yang berjarak seribu piksel membuat mata menyeberang
               layar untuk setiap giliran bicara. */}
-          <div ref={contentRef} className="mx-auto flex min-h-full w-full max-w-[56rem] flex-col justify-end">
+          <div ref={contentRef} className="mx-auto flex min-h-full w-full max-w-[58rem] flex-col justify-end">
             {hasMore[activeId] && (
               <div className="mb-4 text-center">
                 <PillButton tone="quiet" size="sm" className="mx-auto" onClick={() => void loadOlder(activeId)}>
